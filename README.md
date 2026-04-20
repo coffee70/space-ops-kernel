@@ -12,7 +12,6 @@ Expected sibling checkout layout:
 
 ```text
 space-ops/
-  c2-infra/
   space-ops-kernel/
   space-ops-platform/
   space-ops-apps/
