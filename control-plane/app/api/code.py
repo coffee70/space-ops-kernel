@@ -1,0 +1,171 @@
+"""Code operations API."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
+from app.actors import ActorContext, get_actor_context
+from app.config import get_settings
+from app.db import get_db
+from app.deployments.service import DeploymentService
+from app.git.repository import ManagedGitRepository
+from app.schemas import BranchCreateRequest, CommitCreateRequest, DeploymentSubmissionRequest, Envelope, FileWriteRequest
+from app.services.bootstrap_service import ManagedForkBootstrapper
+
+router = APIRouter(prefix="/code", tags=["code"])
+
+
+def get_repository() -> ManagedGitRepository:
+    settings = get_settings()
+    ManagedForkBootstrapper(settings).ensure_bootstrapped()
+    return ManagedGitRepository(settings)
+
+
+def get_deployment_service(session: Session = Depends(get_db)) -> DeploymentService:
+    settings = get_settings()
+    ManagedForkBootstrapper(settings).ensure_bootstrapped()
+    return DeploymentService(settings, ManagedGitRepository(settings), session)
+
+
+@router.get("/roots", response_model=Envelope)
+def get_roots(repository: ManagedGitRepository = Depends(get_repository)) -> Envelope:
+    return Envelope(branch="main", commit_sha=repository.get_head_commit("main"), data={"roots": repository.list_roots()})
+
+
+@router.get("/tree", response_model=Envelope)
+def get_tree(
+    branch: str = Query("main"),
+    path: str | None = Query(None),
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    try:
+        data_path = path or ""
+        return Envelope(
+            branch=branch,
+            commit_sha=repository.get_head_commit(branch),
+            path=data_path or None,
+            changed_files=repository.get_changed_files(branch),
+            data={"entries": repository.get_tree(branch, path)},
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/file", response_model=Envelope)
+def get_file(
+    branch: str = Query("main"),
+    path: str = Query(...),
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    try:
+        content = repository.read_file(branch, path)
+        return Envelope(
+            branch=branch,
+            commit_sha=repository.get_head_commit(branch),
+            path=path,
+            changed_files=repository.get_changed_files(branch),
+            data={"content": content},
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/file", response_model=Envelope)
+def put_file(
+    request: FileWriteRequest,
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    try:
+        changed_files = repository.write_file(request.branch, request.path, request.content)
+        return Envelope(
+            branch=request.branch,
+            commit_sha=repository.get_head_commit(request.branch),
+            path=request.path,
+            changed_files=changed_files,
+            data={"written": True},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/branches", response_model=Envelope)
+def get_branches(repository: ManagedGitRepository = Depends(get_repository)) -> Envelope:
+    return Envelope(branch="main", commit_sha=repository.get_head_commit("main"), data={"branches": repository.list_branches()})
+
+
+@router.post("/branches", response_model=Envelope)
+def create_branch(
+    request: BranchCreateRequest,
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    try:
+        commit_sha = repository.create_branch(request.branch, request.from_branch)
+        return Envelope(branch=request.branch, commit_sha=commit_sha, changed_files=[], data={"created": True})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/commits", response_model=Envelope)
+def create_commit(
+    request: CommitCreateRequest,
+    actor: ActorContext = Depends(get_actor_context),
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    try:
+        commit_sha, changed_files = repository.create_commit(request.branch, request.message, actor)
+        return Envelope(
+            branch=request.branch,
+            commit_sha=commit_sha,
+            changed_files=changed_files,
+            data={"message": request.message},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/history", response_model=Envelope)
+def get_history(
+    branch: str = Query("main"),
+    path: str | None = Query(None),
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    return Envelope(
+        branch=branch,
+        commit_sha=repository.get_head_commit(branch),
+        path=path,
+        changed_files=repository.get_changed_files(branch),
+        data={"history": repository.get_history(branch, path)},
+    )
+
+
+@router.get("/diff", response_model=Envelope)
+def get_diff(
+    branch: str = Query("main"),
+    base_ref: str | None = Query(None),
+    head_ref: str = Query("HEAD"),
+    path: str | None = Query(None),
+    repository: ManagedGitRepository = Depends(get_repository),
+) -> Envelope:
+    try:
+        diff = repository.get_diff(branch, base_ref=base_ref, head_ref=head_ref, path=path)
+        return Envelope(
+            branch=branch,
+            commit_sha=repository.get_head_commit(branch),
+            path=path,
+            changed_files=repository.get_changed_files(branch),
+            data={"diff": diff},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/deployment-submissions")
+def submit_deployment_submission(
+    request: DeploymentSubmissionRequest,
+    service: DeploymentService = Depends(get_deployment_service),
+) -> dict:
+    try:
+        return service.submit(request).model_dump()
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

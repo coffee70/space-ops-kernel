@@ -1,0 +1,2 @@
+"""Managed git package."""
+

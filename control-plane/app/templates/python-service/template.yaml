@@ -1,0 +1,14 @@
+template_id: python-service
+display_name: Python Service
+description: Scaffold a FastAPI backend unit sourced from space-ops-platform.
+unit_kind: service
+allowed_package_owners:
+  - space-ops-platform
+default_build_command: pip install -r requirements.txt
+default_run_command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+health:
+  type: http
+  path: /health
+  port: 8080
+default_category: platform
+

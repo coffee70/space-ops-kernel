@@ -1,0 +1,14 @@
+template_id: node-service
+display_name: Node Service
+description: Scaffold a Node.js backend unit sourced from space-ops-apps.
+unit_kind: service
+allowed_package_owners:
+  - space-ops-apps
+default_build_command: node --check server.js
+default_run_command: node server.js
+health:
+  type: http
+  path: /health
+  port: 8080
+default_category: adapters
+
