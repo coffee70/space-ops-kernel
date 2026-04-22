@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     deployment_command_timeout_seconds: int = 300
     deployment_health_timeout_seconds: int = 45
     deployment_health_poll_interval_seconds: float = 1.5
-    database_url: str | None = None
+    database_url: str = Field(..., min_length=1)
     workspace_root: Path = Field(default_factory=default_workspace_root)
     runtime_root: Path | None = None
     platform_source_root: Path | None = None
@@ -105,9 +105,7 @@ class Settings(BaseSettings):
 
     @property
     def resolved_database_url(self) -> str:
-        if self.database_url:
-            return self.database_url
-        return f"sqlite:///{(self.resolved_runtime_root / 'control-plane.db').as_posix()}"
+        return self.database_url
 
     @property
     def resolved_compose_file(self) -> Path:

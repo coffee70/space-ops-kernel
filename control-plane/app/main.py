@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import code, deployments, health, registry, templates
 from app.config import get_settings
-from app.db import get_engine
 from app.migrations import run_migrations
 from app.services.bootstrap_service import ManagedForkBootstrapper
 
@@ -18,7 +17,7 @@ from app.services.bootstrap_service import ManagedForkBootstrapper
 async def lifespan(_: FastAPI):
     settings = get_settings()
     settings.ensure_runtime_dirs()
-    run_migrations(get_engine())
+    run_migrations()
     ManagedForkBootstrapper(settings).ensure_bootstrapped()
     yield
 
@@ -39,4 +38,3 @@ app.include_router(templates.router)
 app.include_router(deployments.router)
 app.include_router(registry.router)
 app.include_router(registry.proxy_router)
-

@@ -53,6 +53,7 @@ services:
     ports:
       - "8100:8100"
     environment:
+      DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/control_plane_db
       RUNTIME_ROOT: /app/kernel/runtime
       PLATFORM_SOURCE_ROOT: /imports/space-ops-platform
       APPS_SOURCE_ROOT: /imports/space-ops-apps
@@ -74,6 +75,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   mission-control-ui:
     build:

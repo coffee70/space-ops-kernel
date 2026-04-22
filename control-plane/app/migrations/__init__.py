@@ -1,45 +1,33 @@
-"""Migration runner."""
+"""Alembic migration helpers."""
 
 from __future__ import annotations
 
-from importlib import import_module
-from pkgutil import iter_modules
+from pathlib import Path
 
-from sqlalchemy import text
+from alembic import command
+from alembic.config import Config
 
-from app.db import Base
+from app.config import get_settings
 
 
-def run_migrations(engine) -> None:
-    """Apply ordered migration modules once."""
+def get_alembic_config() -> Config:
+    """Build an Alembic config bound to the current kernel settings."""
+
+    project_root = Path(__file__).resolve().parents[2]
+    config = Config(str(project_root / "alembic.ini"))
+    config.set_main_option("script_location", str(project_root / "app" / "migrations"))
+    config.set_main_option("sqlalchemy.url", get_settings().resolved_database_url)
+    return config
+
+
+def run_migrations(engine=None) -> None:
+    """Apply Alembic migrations through head."""
+
+    config = get_alembic_config()
+    if engine is None:
+        command.upgrade(config, "head")
+        return
 
     with engine.begin() as connection:
-        connection.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    version VARCHAR(255) PRIMARY KEY,
-                    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
-        applied = {
-            row[0]
-            for row in connection.execute(text("SELECT version FROM schema_migrations")).fetchall()
-        }
-
-    versions_pkg = "app.migrations.versions"
-    for module_info in sorted(iter_modules(import_module(versions_pkg).__path__), key=lambda item: item.name):
-        module = import_module(f"{versions_pkg}.{module_info.name}")
-        version = getattr(module, "VERSION")
-        if version in applied:
-            continue
-        module.upgrade(engine)
-        with engine.begin() as connection:
-            connection.execute(
-                text("INSERT INTO schema_migrations(version) VALUES (:version)"),
-                {"version": version},
-            )
-
-    Base.metadata.create_all(bind=engine)
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")

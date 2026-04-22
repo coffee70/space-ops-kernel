@@ -8,7 +8,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db import Base
 from app.models.runtime import Deployment, DeploymentEvent, ManagedUnit, UnitHealthSnapshot
 from app.schemas import UnitManifest
 
@@ -44,7 +43,6 @@ class RegistryService:
         self.session.flush()
 
     def create_deployment(self, unit_id: str, branch: str, commit_sha: str) -> Deployment:
-        Base.metadata.create_all(bind=self.session.get_bind())
         unit = self.session.get(ManagedUnit, unit_id)
         if unit is None:
             unit = ManagedUnit(

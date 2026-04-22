@@ -29,12 +29,13 @@ This starts:
 
 - `postgres` on port `5432`
 - `platform-api` on port `8000`
+- `control-plane` on port `8100`
 - `mission-control-ui` on port `3000`
 - `simulator` on port `8001`
 - `simulator2` on port `8002`
 - `satnogs-adapter`
 
-Migrations run as part of the platform API container startup.
+Migrations run as part of service startup through Alembic for both backend services.
 
 ## Runtime Wiring
 
@@ -49,7 +50,8 @@ The selected Layer 3 vehicle configuration bundle is mounted into platform and a
 
 Common environment values:
 
-- `DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/telemetry_db`
+- `platform-api DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/telemetry_db`
+- `control-plane DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/control_plane_db`
 - `NEXT_PUBLIC_API_URL=http://localhost:8000` by default
 - `API_SERVER_URL=http://platform-api:8000`
 - `CORS_ORIGIN_REGEX=^http://[^/]+:3000$`
