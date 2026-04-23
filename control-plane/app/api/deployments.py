@@ -11,16 +11,13 @@ from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
 from app.registry.service import RegistryService
 from app.schemas import DeploymentRecordResponse, DeploymentSubmissionRequest
-from app.services.bootstrap_service import ManagedForkBootstrapper
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
 
 
 def get_deployment_service(session: Session = Depends(get_db)) -> DeploymentService:
     settings = get_settings()
-    ManagedForkBootstrapper(settings).ensure_bootstrapped()
-    repository = ManagedGitRepository(settings)
-    return DeploymentService(settings, repository, session)
+    return DeploymentService(settings, ManagedGitRepository(settings), session)
 
 
 @router.post("", response_model=DeploymentRecordResponse)
@@ -66,4 +63,3 @@ def get_logs(deployment_id: str, session: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="deployment not found")
     settings = get_settings()
     return {"deployment_id": deployment_id, "logs": registry.read_logs(settings.deployment_logs_root, deployment_id)}
-

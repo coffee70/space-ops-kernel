@@ -45,3 +45,37 @@ def test_duplicate_unit_id_rejected(client) -> None:
     )
     assert response.status_code == 400
     assert "already exists" in response.json()["detail"]
+
+
+def test_template_request_does_not_reimport_seed_source(client, control_plane_env) -> None:
+    file_path = "project/space-ops-apps/README.md"
+
+    write_response = client.put(
+        "/code/file",
+        json={
+            "branch": "main",
+            "path": file_path,
+            "content": "managed apps edit\n",
+        },
+    )
+    assert write_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": "main", "message": "Edit apps managed fork"},
+        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
+    )
+    assert commit_response.status_code == 200
+
+    mounted_seed_file = control_plane_env / "space-ops-apps" / "README.md"
+    mounted_seed_file.write_text("mounted apps seed changed\n", encoding="utf-8")
+
+    templates_response = client.get("/templates")
+    assert templates_response.status_code == 200
+
+    file_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": file_path},
+    )
+    assert file_response.status_code == 200
+    assert file_response.json()["data"]["content"] == "managed apps edit\n"

@@ -8,7 +8,6 @@ from app.actors import ActorContext, get_actor_context
 from app.config import get_settings
 from app.git.repository import ManagedGitRepository
 from app.schemas import Envelope, ScaffoldRequest, TemplateSummary
-from app.services.bootstrap_service import ManagedForkBootstrapper
 from app.services.template_service import TemplateService
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -16,9 +15,7 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 
 def get_template_service() -> TemplateService:
     settings = get_settings()
-    ManagedForkBootstrapper(settings).ensure_bootstrapped()
-    repository = ManagedGitRepository(settings)
-    return TemplateService(settings, repository)
+    return TemplateService(settings, ManagedGitRepository(settings))
 
 
 @router.get("", response_model=list[TemplateSummary])
@@ -52,4 +49,3 @@ def scaffold(
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-

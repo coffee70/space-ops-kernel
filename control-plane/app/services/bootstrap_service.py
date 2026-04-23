@@ -45,19 +45,19 @@ BOOTSTRAP_UNITS = (
 
 
 class ManagedForkBootstrapper:
-    """Create and sync the managed fork."""
+    """Create the managed fork and preserve it as durable editable state."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
 
     def ensure_bootstrapped(self) -> None:
-        """Ensure the bare repo exists and the main worktree mirrors local source."""
+        """Ensure the managed fork exists without overwriting existing managed code."""
 
         self.settings.ensure_runtime_dirs()
-        if not self.settings.bare_repo_dir.exists() or not any(self.settings.bare_repo_dir.iterdir()):
+        repo_missing = not self.settings.bare_repo_dir.exists() or not any(self.settings.bare_repo_dir.iterdir())
+        if repo_missing:
             self._initialize_managed_repo()
         self._ensure_main_worktree()
-        self._sync_main_worktree()
 
     def _initialize_managed_repo(self) -> None:
         self.settings.bare_repo_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +91,15 @@ class ManagedForkBootstrapper:
             ]
         )
 
-    def _sync_main_worktree(self) -> None:
+    def _reimport_seed_source_into_main_worktree(self) -> None:
+        """
+        Destructively re-import mounted seed source into the main managed worktree.
+
+        This method deletes managed fork paths before copying from the mounted seed
+        source. It must not be called during request handling or normal startup.
+        Future callers must expose this as an explicit reset/re-import operation.
+        """
+
         worktree = self.settings.main_worktree_dir
         for relative in ("project/space-ops-platform", "project/space-ops-apps", "manifests/units"):
             target = worktree / relative

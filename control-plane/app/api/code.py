@@ -11,20 +11,16 @@ from app.db import get_db
 from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
 from app.schemas import BranchCreateRequest, CommitCreateRequest, DeploymentSubmissionRequest, Envelope, FileWriteRequest
-from app.services.bootstrap_service import ManagedForkBootstrapper
 
 router = APIRouter(prefix="/code", tags=["code"])
 
 
 def get_repository() -> ManagedGitRepository:
-    settings = get_settings()
-    ManagedForkBootstrapper(settings).ensure_bootstrapped()
-    return ManagedGitRepository(settings)
+    return ManagedGitRepository(get_settings())
 
 
 def get_deployment_service(session: Session = Depends(get_db)) -> DeploymentService:
     settings = get_settings()
-    ManagedForkBootstrapper(settings).ensure_bootstrapped()
     return DeploymentService(settings, ManagedGitRepository(settings), session)
 
 

@@ -225,3 +225,66 @@ def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
     assert runtime_ref.health.path == "/health"
     assert runtime_ref.proxy.base_path == ""
     assert "target_url" not in runtime_ref.model_dump(mode="json")
+
+
+def test_deployment_request_does_not_reimport_seed_source(client, control_plane_env) -> None:
+    file_path = "project/space-ops-platform/backend/services/derived-telemetry-service/app/main.py"
+
+    managed_content = (
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/health')\n"
+        "def health():\n"
+        "    return {'status': 'managed-fork'}\n"
+    )
+
+    write_response = client.put(
+        "/code/file",
+        json={
+            "branch": "main",
+            "path": file_path,
+            "content": managed_content,
+        },
+    )
+    assert write_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": "main", "message": "Update deployable service"},
+        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
+    )
+    assert commit_response.status_code == 200
+    commit_sha = commit_response.json()["commit_sha"]
+
+    mounted_seed_file = (
+        control_plane_env
+        / "space-ops-platform"
+        / "backend/services/derived-telemetry-service/app/main.py"
+    )
+    mounted_seed_file.write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/health')\n"
+        "def health():\n"
+        "    return {'status': 'mounted-seed'}\n",
+        encoding="utf-8",
+    )
+
+    deploy_response = client.post(
+        "/deployments",
+        json={
+            "unit_id": "derived-telemetry-service",
+            "branch": "main",
+            "commit_sha": commit_sha,
+        },
+    )
+    assert deploy_response.status_code == 200
+    assert deploy_response.json()["commit_sha"] == commit_sha
+
+    file_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": file_path},
+    )
+    assert file_response.status_code == 200
+    assert "managed-fork" in file_response.json()["data"]["content"]
+    assert "mounted-seed" not in file_response.json()["data"]["content"]

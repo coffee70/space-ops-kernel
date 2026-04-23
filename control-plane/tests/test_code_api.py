@@ -56,3 +56,39 @@ def test_branch_write_commit_history_and_diff(client) -> None:
     assert diff_response.status_code == 200
     assert "+phase-2" in diff_response.json()["data"]["diff"]
 
+
+def test_code_read_request_does_not_reimport_seed_source(client, control_plane_env) -> None:
+    file_path = "project/space-ops-platform/README.md"
+
+    write_response = client.put(
+        "/code/file",
+        json={
+            "branch": "main",
+            "path": file_path,
+            "content": "managed fork user edit\n",
+        },
+    )
+    assert write_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": "main", "message": "User edit in managed fork"},
+        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
+    )
+    assert commit_response.status_code == 200
+
+    mounted_seed_file = control_plane_env / "space-ops-platform" / "README.md"
+    mounted_seed_file.write_text("mounted seed source changed\n", encoding="utf-8")
+
+    tree_response = client.get(
+        "/code/tree",
+        params={"branch": "main", "path": "project/space-ops-platform"},
+    )
+    assert tree_response.status_code == 200
+
+    file_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": file_path},
+    )
+    assert file_response.status_code == 200
+    assert file_response.json()["data"]["content"] == "managed fork user edit\n"
