@@ -120,6 +120,7 @@ class DeploymentService:
             "env_file": str(env_path),
             "health_url": f"http://{service_name}:{manifest.health.port}{manifest.health.path}",
             "target_url": self._target_url(manifest, service_name, manifest.health.port),
+            "base_url": f"http://{service_name}:{manifest.health.port}",
         }
 
         if self.settings.runtime_strategy == "docker":
@@ -195,6 +196,17 @@ class DeploymentService:
             "DISPLAY_NAME": manifest.display_name,
             "PORT": str(manifest.health.port),
         }
+        if manifest.package_owner == "space-ops-platform":
+            env.update(
+                {
+                    "DATABASE_URL": self.settings.platform_database_url,
+                    "OPENAI_API_KEY": self.settings.platform_openai_api_key,
+                    "OPENAI_BASE_URL": self.settings.platform_openai_base_url,
+                    "VEHICLE_CONFIG_ROOT": "/app/vehicle-configurations",
+                    "CONTROL_PLANE_URL": self.settings.platform_control_plane_url,
+                    "NATS_URL": self.settings.platform_nats_url,
+                }
+            )
         if manifest.unit_kind == "module":
             route_slug = manifest.discovery.get("route_slug", manifest.unit_id)
             env["MODULE_BASE_PATH"] = f"/runtime-modules/{route_slug}"
@@ -222,23 +234,32 @@ class DeploymentService:
             "services": {
                 service_name: {
                     "build": {
-                        "context": str(unit_source_root),
-                        "dockerfile": "Dockerfile",
+                        "context": str(self._build_context_path(manifest, source_root)),
+                        "dockerfile": self._build_dockerfile_path(manifest),
                     },
                     "command": manifest.run.command,
-                    "env_file": [str(env_path)],
+                    "environment": self._build_runtime_env(manifest, service_name),
                 }
             }
         }
         return payload
 
+    def _build_context_path(self, manifest: UnitManifest, source_root: Path) -> Path:
+        if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":
+            return source_root / "project"
+        return source_root / manifest.source_path
+
+    @staticmethod
+    def _build_dockerfile_path(manifest: UnitManifest) -> str:
+        if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":
+            return "space-ops-platform/Dockerfile"
+        return "Dockerfile"
+
     def _target_url(self, manifest: UnitManifest, service_name: str, port: int) -> str:
         if manifest.unit_kind == "module":
             route_slug = manifest.discovery.get("route_slug", manifest.unit_id)
             return f"http://{service_name}:{port}/runtime-modules/{route_slug}"
-        api_base_path = manifest.discovery.get("api_base_path")
-        suffix = api_base_path or ""
-        return f"http://{service_name}:{port}{suffix}"
+        return f"http://{service_name}:{port}"
 
     @staticmethod
     def _append_log(path: Path, content: str) -> None:

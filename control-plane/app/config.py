@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     deployment_health_timeout_seconds: int = 45
     deployment_health_poll_interval_seconds: float = 1.5
     database_url: str = Field(..., min_length=1)
+    platform_database_url: str = "postgresql://telemetry:telemetry@postgres:5432/telemetry_db"
+    platform_openai_api_key: str = ""
+    platform_openai_base_url: str = ""
+    platform_control_plane_url: str = "http://control-plane:8100"
+    platform_nats_url: str = "nats://nats:4222"
     workspace_root: Path = Field(default_factory=default_workspace_root)
     runtime_root: Path | None = None
     platform_source_root: Path | None = None
@@ -102,6 +107,10 @@ class Settings(BaseSettings):
     @property
     def resolved_apps_source_root(self) -> Path:
         return self.apps_source_root or (self.workspace_root / "space-ops-apps")
+
+    @property
+    def resolved_vehicle_config_root(self) -> Path:
+        return self.resolved_apps_source_root / "vehicle-configurations"
 
     @property
     def resolved_database_url(self) -> str:

@@ -1,4 +1,4 @@
-"""Managed fork bootstrap."""
+"""Managed fork and runtime bootstrap."""
 
 from __future__ import annotations
 
@@ -6,7 +6,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import httpx
+
 from app.config import Settings
+from app.db import get_session_factory
+from app.deployments.service import DeploymentService
+from app.git.repository import ManagedGitRepository
+from app.registry.service import RegistryService
+from app.schemas import DeploymentSubmissionRequest
 from app.services.shell import run_command
 
 IGNORE_NAMES = shutil.ignore_patterns(
@@ -21,20 +28,37 @@ IGNORE_NAMES = shutil.ignore_patterns(
     "tmp",
 )
 
+BOOTSTRAP_UNITS = (
+    "vehicle-config-service",
+    "source-registry-service",
+    "telemetry-ingest-service",
+    "position-orbit-service",
+    "simulator-control-service",
+    "telemetry-query-service",
+    "telemetry-intelligence-service",
+    "ops-events-service",
+    "platform-api-gateway",
+    "derived-telemetry-service",
+    "battery-efficiency-module",
+)
+
 
 class ManagedForkBootstrapper:
-    """Create and seed the managed fork."""
+    """Create and sync the managed fork."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
 
     def ensure_bootstrapped(self) -> None:
-        """Create the bare repo and main worktree if missing."""
+        """Ensure the bare repo exists and the main worktree mirrors local source."""
 
         self.settings.ensure_runtime_dirs()
-        if self.settings.bare_repo_dir.exists() and self.settings.main_worktree_dir.exists():
-            return
+        if not self.settings.bare_repo_dir.exists() or not any(self.settings.bare_repo_dir.iterdir()):
+            self._initialize_managed_repo()
+        self._ensure_main_worktree()
+        self._sync_main_worktree()
 
+    def _initialize_managed_repo(self) -> None:
         self.settings.bare_repo_dir.mkdir(parents=True, exist_ok=True)
 
         with tempfile.TemporaryDirectory(dir=self.settings.resolved_runtime_root) as temp_dir_name:
@@ -52,8 +76,9 @@ class ManagedForkBootstrapper:
             run_command(["git", "remote", "add", "origin", str(self.settings.bare_repo_dir)], cwd=temp_dir)
             run_command(["git", "push", "--force", "origin", "main"], cwd=temp_dir)
 
+    def _ensure_main_worktree(self) -> None:
         if self.settings.main_worktree_dir.exists():
-            shutil.rmtree(self.settings.main_worktree_dir)
+            return
         run_command(
             [
                 "git",
@@ -64,6 +89,42 @@ class ManagedForkBootstrapper:
                 "main",
             ]
         )
+
+    def _sync_main_worktree(self) -> None:
+        worktree = self.settings.main_worktree_dir
+        for relative in ("project/space-ops-platform", "project/space-ops-apps", "manifests/units"):
+            target = worktree / relative
+            if target.exists():
+                shutil.rmtree(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.copytree(
+            self.settings.resolved_platform_source_root,
+            worktree / "project" / "space-ops-platform",
+            ignore=IGNORE_NAMES,
+            dirs_exist_ok=True,
+        )
+        shutil.copytree(
+            self.settings.resolved_apps_source_root,
+            worktree / "project" / "space-ops-apps",
+            ignore=IGNORE_NAMES,
+            dirs_exist_ok=True,
+        )
+
+        manifests_root = worktree / "manifests" / "units"
+        manifests_root.mkdir(parents=True, exist_ok=True)
+        seed_root = Path(__file__).resolve().parents[1] / "bootstrap" / "manifests"
+        for manifest_path in seed_root.glob("*.yaml"):
+            shutil.copy2(manifest_path, manifests_root / manifest_path.name)
+
+        run_command(["git", "config", "user.name", "Space Ops Control Plane"], cwd=worktree)
+        run_command(["git", "config", "user.email", "control-plane@space-ops.local"], cwd=worktree)
+        run_command(["git", "add", "-A"], cwd=worktree)
+        status = run_command(["git", "status", "--porcelain"], cwd=worktree).stdout.strip()
+        if not status:
+            return
+        run_command(["git", "commit", "-m", "Sync managed fork import"], cwd=worktree)
+        run_command(["git", "push", "origin", "main"], cwd=worktree)
 
     def _materialize_import_tree(self, root: Path) -> None:
         project_root = root / "project"
@@ -88,3 +149,62 @@ class ManagedForkBootstrapper:
         for manifest_path in seed_root.glob("*.yaml"):
             shutil.copy2(manifest_path, manifests_root / manifest_path.name)
 
+
+class RuntimeBootstrapper:
+    """Ensure required managed units are deployed for the local stack."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    def ensure_bootstrapped(self) -> None:
+        repository = ManagedGitRepository(self.settings)
+        commit_sha = repository.get_head_commit("main")
+        session_factory = get_session_factory()
+
+        with session_factory() as session:
+            deployment_service = DeploymentService(self.settings, repository, session)
+            registry = RegistryService(session)
+
+            for unit_id in BOOTSTRAP_UNITS:
+                if self._deployment_is_current(registry, deployment_service, unit_id, commit_sha):
+                    continue
+                result = deployment_service.submit(
+                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha)
+                )
+                session.commit()
+                if result.status != "healthy":
+                    raise RuntimeError(f"failed to bootstrap {unit_id}: {result.failure_reason or result.status}")
+
+    def _deployment_is_current(
+        self,
+        registry: RegistryService,
+        deployment_service: DeploymentService,
+        unit_id: str,
+        commit_sha: str,
+    ) -> bool:
+        unit = registry.get_unit(unit_id)
+        if unit is None or not unit.active_deployment_id:
+            return False
+
+        deployment = registry.get_deployment(unit.active_deployment_id)
+        if deployment is None or deployment.status != "healthy" or deployment.commit_sha != commit_sha:
+            return False
+        if self.settings.runtime_strategy != "docker":
+            return True
+
+        runtime_ref = deployment.runtime_ref or {}
+        health_url = runtime_ref.get("health_url")
+        if not health_url:
+            return False
+        manifest = deployment_service._load_manifest(commit_sha, unit_id)
+        return self._healthcheck_passes(manifest.health.path, health_url)
+
+    @staticmethod
+    def _healthcheck_passes(health_path: str, health_url: str) -> bool:
+        if not health_url.endswith(health_path):
+            return False
+        try:
+            response = httpx.get(health_url, timeout=5.0)
+        except Exception:
+            return False
+        return response.status_code < 400

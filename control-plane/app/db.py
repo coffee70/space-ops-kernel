@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import get_settings
@@ -11,6 +12,34 @@ Base = declarative_base()
 
 _engine = None
 _SessionLocal = None
+
+
+def ensure_database_exists(database_url: str | None = None) -> None:
+    """Create the configured Postgres database when a reused local volume is missing it."""
+
+    url = make_url(database_url or get_settings().resolved_database_url)
+    database_name = url.database
+    if not database_name or not url.drivername.startswith("postgresql"):
+        return
+
+    admin_engine = create_engine(
+        url.set(database="postgres"),
+        future=True,
+        isolation_level="AUTOCOMMIT",
+        pool_pre_ping=True,
+    )
+    try:
+        with admin_engine.connect() as connection:
+            exists = connection.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :database_name"),
+                {"database_name": database_name},
+            ).scalar()
+            if exists:
+                return
+            quoted_name = database_name.replace('"', '""')
+            connection.execute(text(f'CREATE DATABASE "{quoted_name}"'))
+    finally:
+        admin_engine.dispose()
 
 
 def get_engine():

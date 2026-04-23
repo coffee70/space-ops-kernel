@@ -17,10 +17,21 @@ services:
       timeout: 5s
       retries: 5
 
+  nats:
+    image: nats:2.11-alpine
+    container_name: telemetry-nats
+    ports:
+      - "4222:4222"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4222"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   platform-api:
     build:
-      context: ../space-ops-platform
-      dockerfile: backend/Dockerfile
+      context: ..
+      dockerfile: space-ops-platform/Dockerfile
     container_name: telemetry-platform-api
     ports:
       - "8000:8000"
@@ -29,9 +40,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
+      CONTROL_PLANE_URL: http://control-plane:8100
+      NATS_URL: nats://nats:4222
       CORS_ORIGIN_REGEX: "^http://[^/]+:3000$"
-    volumes:
-      - ../space-ops-apps/vehicle-configurations:/app/vehicle-configurations:ro
     healthcheck:
       test:
         [
@@ -43,6 +54,8 @@ services:
       retries: 20
     depends_on:
       postgres:
+        condition: service_healthy
+      nats:
         condition: service_healthy
 
   control-plane:
@@ -61,6 +74,11 @@ services:
       COMPOSE_PROJECT_NAME: space-ops-kernel
       RUNTIME_STRATEGY: docker
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
+      PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PLATFORM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100
+      PLATFORM_NATS_URL: nats://nats:4222
     volumes:
       - ./:/app/kernel
       - ../space-ops-platform:/imports/space-ops-platform:ro
@@ -77,6 +95,8 @@ services:
       retries: 20
     depends_on:
       postgres:
+        condition: service_healthy
+      nats:
         condition: service_healthy
 
   mission-control-ui:

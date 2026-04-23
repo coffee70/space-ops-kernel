@@ -9,16 +9,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import code, deployments, health, registry, templates
 from app.config import get_settings
+from app.db import ensure_database_exists
 from app.migrations import run_migrations
-from app.services.bootstrap_service import ManagedForkBootstrapper
+from app.services.bootstrap_service import ManagedForkBootstrapper, RuntimeBootstrapper
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
     settings.ensure_runtime_dirs()
+    ensure_database_exists()
     run_migrations()
     ManagedForkBootstrapper(settings).ensure_bootstrapped()
+    RuntimeBootstrapper(settings).ensure_bootstrapped()
     yield
 
 
