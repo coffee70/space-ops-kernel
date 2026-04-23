@@ -91,50 +91,6 @@ class ManagedForkBootstrapper:
             ]
         )
 
-    def _reimport_seed_source_into_main_worktree(self) -> None:
-        """
-        Destructively re-import mounted seed source into the main managed worktree.
-
-        This method deletes managed fork paths before copying from the mounted seed
-        source. It must not be called during request handling or normal startup.
-        Future callers must expose this as an explicit reset/re-import operation.
-        """
-
-        worktree = self.settings.main_worktree_dir
-        for relative in ("project/space-ops-platform", "project/space-ops-apps", "manifests/units"):
-            target = worktree / relative
-            if target.exists():
-                shutil.rmtree(target)
-            target.parent.mkdir(parents=True, exist_ok=True)
-
-        shutil.copytree(
-            self.settings.resolved_platform_source_root,
-            worktree / "project" / "space-ops-platform",
-            ignore=IGNORE_NAMES,
-            dirs_exist_ok=True,
-        )
-        shutil.copytree(
-            self.settings.resolved_apps_source_root,
-            worktree / "project" / "space-ops-apps",
-            ignore=IGNORE_NAMES,
-            dirs_exist_ok=True,
-        )
-
-        manifests_root = worktree / "manifests" / "units"
-        manifests_root.mkdir(parents=True, exist_ok=True)
-        seed_root = Path(__file__).resolve().parents[1] / "bootstrap" / "manifests"
-        for manifest_path in seed_root.glob("*.yaml"):
-            shutil.copy2(manifest_path, manifests_root / manifest_path.name)
-
-        run_command(["git", "config", "user.name", "Space Ops Control Plane"], cwd=worktree)
-        run_command(["git", "config", "user.email", "control-plane@space-ops.local"], cwd=worktree)
-        run_command(["git", "add", "-A"], cwd=worktree)
-        status = run_command(["git", "status", "--porcelain"], cwd=worktree).stdout.strip()
-        if not status:
-            return
-        run_command(["git", "commit", "-m", "Sync managed fork import"], cwd=worktree)
-        run_command(["git", "push", "origin", "main"], cwd=worktree)
-
     def _materialize_import_tree(self, root: Path) -> None:
         project_root = root / "project"
         manifests_root = root / "manifests" / "units"
