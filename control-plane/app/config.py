@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     deployment_command_timeout_seconds: int = 300
     deployment_health_timeout_seconds: int = 45
     deployment_health_poll_interval_seconds: float = 1.5
+    proxy_allowed_schemes: tuple[str, ...] = ("http",)
+    proxy_allow_ip_hosts: bool = False
+    proxy_allow_localhost_hosts: bool = False
+    proxy_allowed_host_suffixes: tuple[str, ...] = ()
+    proxy_allowed_hosts: tuple[str, ...] = ()
     database_url: str = Field(..., min_length=1)
     platform_database_url: str = "postgresql://telemetry:telemetry@postgres:5432/telemetry_db"
     platform_openai_api_key: str = ""

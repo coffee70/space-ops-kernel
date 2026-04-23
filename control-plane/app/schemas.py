@@ -75,6 +75,37 @@ class HealthSpec(BaseModel):
     port: int
 
 
+class RuntimeTransport(BaseModel):
+    """Transport settings for an active runtime."""
+
+    scheme: Literal["http"] = "http"
+    host: str
+    port: int
+
+
+class RuntimeHealth(BaseModel):
+    """Health endpoint settings for an active runtime."""
+
+    path: str
+
+
+class RuntimeProxy(BaseModel):
+    """Proxy path settings for an active runtime."""
+
+    base_path: str = ""
+
+
+class RuntimeRef(BaseModel):
+    """Structured runtime connectivity metadata."""
+
+    service_name: str
+    compose_file: str | None = None
+    env_file: str | None = None
+    transport: RuntimeTransport
+    health: RuntimeHealth
+    proxy: RuntimeProxy = Field(default_factory=RuntimeProxy)
+
+
 class UnitManifest(BaseModel):
     """Unit manifest."""
 
@@ -111,6 +142,16 @@ class TemplateSummary(BaseModel):
     description: str
 
 
+class RuntimeEndpointSummary(BaseModel):
+    """Runtime endpoint summary for registry responses."""
+
+    service_name: str
+    host: str
+    port: int
+    proxy_base_path: str
+    health_path: str
+
+
 class RegistryUnitResponse(BaseModel):
     """Managed unit response."""
 
@@ -124,6 +165,7 @@ class RegistryUnitResponse(BaseModel):
     deployment_status: str
     health_status: str
     discovery_metadata_json: dict[str, Any]
+    runtime_endpoint: RuntimeEndpointSummary | None = None
 
 
 class DeploymentRecordResponse(BaseModel):
@@ -138,4 +180,3 @@ class DeploymentRecordResponse(BaseModel):
     logs_url: str
     registered: bool
     failure_reason: str | None = None
-

@@ -13,7 +13,16 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.git.repository import ManagedGitRepository
 from app.registry.service import RegistryService
-from app.schemas import DeploymentRecordResponse, DeploymentSubmissionRequest, UnitManifest
+from app.schemas import (
+    DeploymentRecordResponse,
+    DeploymentSubmissionRequest,
+    RuntimeHealth,
+    RuntimeProxy,
+    RuntimeRef,
+    RuntimeTransport,
+    UnitManifest,
+)
+from app.services.proxy_targets import build_runtime_health_url
 from app.services.shell import run_command
 
 
@@ -38,10 +47,10 @@ class DeploymentService:
             shutil.rmtree(workspace)
         workspace.mkdir(parents=True, exist_ok=True)
 
-        old_active = self.registry.get_unit(request.unit_id)
-        previous_runtime_ref = None
-        if old_active and old_active.discovery_metadata_json:
-            previous_runtime_ref = old_active.discovery_metadata_json.get("runtime_ref")
+        try:
+            previous_runtime_ref = self.registry.get_runtime_ref_for_unit(request.unit_id)
+        except Exception:
+            previous_runtime_ref = None
 
         try:
             manifest = self._load_manifest(commit_sha, request.unit_id)
@@ -58,8 +67,12 @@ class DeploymentService:
                 source_root=source_root,
                 logs_path=logs_path,
             )
-            self._run_health_check(manifest, runtime_ref)
-            self.registry.register_healthy_deployment(deployment, manifest, runtime_ref)
+            self._run_health_check(runtime_ref)
+            self.registry.register_healthy_deployment(
+                deployment,
+                manifest,
+                runtime_ref.model_dump(mode="json"),
+            )
 
             if previous_runtime_ref and self.settings.runtime_strategy == "docker":
                 self._teardown_runtime(previous_runtime_ref, logs_path)
@@ -95,7 +108,7 @@ class DeploymentService:
         manifest: UnitManifest,
         source_root: Path,
         logs_path: Path,
-    ) -> dict[str, Any]:
+    ) -> RuntimeRef:
         service_name = f"{manifest.unit_id}-{deployment_id}".replace("_", "-")
         compose_path = self.settings.generated_compose_root / f"{deployment_id}.yaml"
         env_path = self.settings.generated_env_root / f"{deployment_id}.env"
@@ -114,14 +127,12 @@ class DeploymentService:
         compose_path.write_text(yaml.safe_dump(compose_payload, sort_keys=False), encoding="utf-8")
         self._append_log(logs_path, f"Compose fragment: {compose_path}\n")
 
-        runtime_ref = {
-            "service_name": service_name,
-            "compose_file": str(compose_path),
-            "env_file": str(env_path),
-            "health_url": f"http://{service_name}:{manifest.health.port}{manifest.health.path}",
-            "target_url": self._target_url(manifest, service_name, manifest.health.port),
-            "base_url": f"http://{service_name}:{manifest.health.port}",
-        }
+        runtime_ref = self._build_runtime_ref(
+            manifest=manifest,
+            service_name=service_name,
+            compose_path=compose_path,
+            env_path=env_path,
+        )
 
         if self.settings.runtime_strategy == "docker":
             command = [
@@ -140,13 +151,44 @@ class DeploymentService:
             self._append_log(logs_path, result.stderr)
         else:
             self._append_log(logs_path, "Stub runtime strategy enabled; skipping docker compose.\n")
-            runtime_ref["health_url"] = "http://stub-runtime.local/health"
-            runtime_ref["target_url"] = manifest.discovery.get("target_url") or "http://stub-runtime.local"
         return runtime_ref
 
-    def _run_health_check(self, manifest: UnitManifest, runtime_ref: dict[str, Any]) -> None:
+    def _build_runtime_ref(
+        self,
+        *,
+        manifest: UnitManifest,
+        service_name: str,
+        compose_path: Path,
+        env_path: Path,
+    ) -> RuntimeRef:
+        return RuntimeRef(
+            service_name=service_name,
+            compose_file=str(compose_path),
+            env_file=str(env_path),
+            transport=RuntimeTransport(
+                scheme="http",
+                host=service_name,
+                port=manifest.health.port,
+            ),
+            health=RuntimeHealth(path=self._build_health_path(manifest)),
+            proxy=RuntimeProxy(base_path=self._build_proxy_base_path(manifest)),
+        )
+
+    @staticmethod
+    def _build_health_path(manifest: UnitManifest) -> str:
+        return manifest.health.path
+
+    @staticmethod
+    def _build_proxy_base_path(manifest: UnitManifest) -> str:
+        if manifest.unit_kind == "module":
+            route_slug = manifest.discovery.get("route_slug", manifest.unit_id)
+            return f"/runtime-modules/{route_slug}"
+        return ""
+
+    def _run_health_check(self, runtime_ref: RuntimeRef) -> None:
         if self.settings.runtime_strategy == "stub":
             return
+        health_url = build_runtime_health_url(runtime_ref)
         with httpx.Client(timeout=5.0) as client:
             attempts = max(
                 1,
@@ -158,7 +200,7 @@ class DeploymentService:
             last_error: str | None = None
             for _ in range(attempts):
                 try:
-                    response = client.get(runtime_ref["health_url"])
+                    response = client.get(health_url)
                     if response.status_code < 400:
                         return
                     last_error = f"health check returned {response.status_code}"
@@ -169,9 +211,9 @@ class DeploymentService:
                 time.sleep(self.settings.deployment_health_poll_interval_seconds)
             raise RuntimeError(last_error or "health check failed")
 
-    def _teardown_runtime(self, runtime_ref: dict[str, Any], logs_path: Path) -> None:
-        compose_file = runtime_ref.get("compose_file")
-        service_name = runtime_ref.get("service_name")
+    def _teardown_runtime(self, runtime_ref: RuntimeRef, logs_path: Path) -> None:
+        compose_file = runtime_ref.compose_file
+        service_name = runtime_ref.service_name
         if not compose_file or not service_name:
             return
         result = run_command(
@@ -254,12 +296,6 @@ class DeploymentService:
         if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":
             return "space-ops-platform/Dockerfile"
         return "Dockerfile"
-
-    def _target_url(self, manifest: UnitManifest, service_name: str, port: int) -> str:
-        if manifest.unit_kind == "module":
-            route_slug = manifest.discovery.get("route_slug", manifest.unit_id)
-            return f"http://{service_name}:{port}/runtime-modules/{route_slug}"
-        return f"http://{service_name}:{port}"
 
     @staticmethod
     def _append_log(path: Path, content: str) -> None:

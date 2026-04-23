@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.runtime import Deployment, DeploymentEvent, ManagedUnit, UnitHealthSnapshot
-from app.schemas import UnitManifest
+from app.schemas import RuntimeRef, UnitManifest
 
 
 def utcnow() -> datetime:
@@ -125,10 +125,7 @@ class RegistryService:
         previous_active.active_deployment_id = deployment.deployment_id
         previous_active.deployment_status = "healthy"
         previous_active.health_status = "passing"
-        previous_active.discovery_metadata_json = {
-            **manifest.discovery,
-            "runtime_ref": runtime_ref,
-        }
+        previous_active.discovery_metadata_json = {**manifest.discovery}
         previous_active.updated_at = utcnow()
 
         self.record_event(
@@ -164,6 +161,21 @@ class RegistryService:
 
     def get_deployment(self, deployment_id: str) -> Deployment | None:
         return self.session.get(Deployment, deployment_id)
+
+    def get_active_deployment_for_unit(self, unit_id: str) -> Deployment | None:
+        unit = self.get_unit(unit_id)
+        if unit is None or not unit.active_deployment_id:
+            return None
+        deployment = self.get_deployment(unit.active_deployment_id)
+        if deployment is None or deployment.status != "healthy":
+            return None
+        return deployment
+
+    def get_runtime_ref_for_unit(self, unit_id: str) -> RuntimeRef | None:
+        deployment = self.get_active_deployment_for_unit(unit_id)
+        if deployment is None or not deployment.runtime_ref:
+            return None
+        return RuntimeRef.model_validate(deployment.runtime_ref)
 
     def get_events(self, deployment_id: str) -> list[DeploymentEvent]:
         return list(

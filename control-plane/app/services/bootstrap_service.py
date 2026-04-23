@@ -13,7 +13,8 @@ from app.db import get_session_factory
 from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
 from app.registry.service import RegistryService
-from app.schemas import DeploymentSubmissionRequest
+from app.schemas import DeploymentSubmissionRequest, RuntimeRef
+from app.services.proxy_targets import build_runtime_health_url
 from app.services.shell import run_command
 
 IGNORE_NAMES = shutil.ignore_patterns(
@@ -192,10 +193,13 @@ class RuntimeBootstrapper:
         if self.settings.runtime_strategy != "docker":
             return True
 
-        runtime_ref = deployment.runtime_ref or {}
-        health_url = runtime_ref.get("health_url")
-        if not health_url:
+        if not deployment.runtime_ref:
             return False
+        try:
+            runtime_ref = RuntimeRef.model_validate(deployment.runtime_ref)
+        except Exception:
+            return False
+        health_url = build_runtime_health_url(runtime_ref)
         manifest = deployment_service._load_manifest(commit_sha, unit_id)
         return self._healthcheck_passes(manifest.health.path, health_url)
 

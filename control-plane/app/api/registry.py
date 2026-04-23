@@ -8,10 +8,17 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.models.runtime import ManagedUnit
 from app.registry.service import RegistryService
-from app.schemas import RegistryUnitResponse
+from app.schemas import RegistryUnitResponse, RuntimeRef
+from app.services.proxy_targets import (
+    RuntimeProxyValidationError,
+    build_runtime_upstream_url,
+    runtime_endpoint_summary,
+    validate_runtime_ref,
+)
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 proxy_router = APIRouter(prefix="/proxy", tags=["proxy"])
@@ -29,37 +36,79 @@ HOP_BY_HOP_HEADERS = {
 }
 
 
-def _serialize_units(units: Iterable[ManagedUnit]) -> list[RegistryUnitResponse]:
-    return [RegistryUnitResponse.model_validate(unit, from_attributes=True) for unit in units]
+def _serialize_unit(unit: ManagedUnit, registry: RegistryService) -> RegistryUnitResponse:
+    runtime_endpoint = None
+    try:
+        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
+    except Exception:
+        runtime_ref = None
+    if runtime_ref is not None:
+        runtime_endpoint = runtime_endpoint_summary(runtime_ref)
+    return RegistryUnitResponse(
+        unit_id=unit.unit_id,
+        display_name=unit.display_name,
+        package_owner=unit.package_owner,
+        unit_kind=unit.unit_kind,
+        runtime_template=unit.runtime_template,
+        source_path=unit.source_path,
+        active_deployment_id=unit.active_deployment_id,
+        deployment_status=unit.deployment_status,
+        health_status=unit.health_status,
+        discovery_metadata_json=unit.discovery_metadata_json,
+        runtime_endpoint=runtime_endpoint,
+    )
+
+
+def _serialize_units(units: Iterable[ManagedUnit], registry: RegistryService) -> list[RegistryUnitResponse]:
+    return [_serialize_unit(unit, registry) for unit in units]
 
 
 @router.get("/units", response_model=list[RegistryUnitResponse])
 def get_units(session: Session = Depends(get_db)) -> list[RegistryUnitResponse]:
-    return _serialize_units(RegistryService(session).get_units())
+    registry = RegistryService(session)
+    return _serialize_units(registry.get_units(), registry)
 
 
 @router.get("/units/{unit_id}", response_model=RegistryUnitResponse)
 def get_unit(unit_id: str, session: Session = Depends(get_db)) -> RegistryUnitResponse:
-    unit = RegistryService(session).get_unit(unit_id)
+    registry = RegistryService(session)
+    unit = registry.get_unit(unit_id)
     if unit is None:
         raise HTTPException(status_code=404, detail="unit not found")
-    return RegistryUnitResponse.model_validate(unit, from_attributes=True)
+    return _serialize_unit(unit, registry)
 
 
 @router.get("/services", response_model=list[RegistryUnitResponse])
 def get_services(session: Session = Depends(get_db)) -> list[RegistryUnitResponse]:
-    return _serialize_units(RegistryService(session).get_units(kind="service"))
+    registry = RegistryService(session)
+    return _serialize_units(registry.get_units(kind="service"), registry)
 
 
 @router.get("/modules", response_model=list[RegistryUnitResponse])
 def get_modules(session: Session = Depends(get_db)) -> list[RegistryUnitResponse]:
-    return _serialize_units(RegistryService(session).get_units(kind="module"))
+    registry = RegistryService(session)
+    return _serialize_units(registry.get_units(kind="module"), registry)
+
+
+def _get_runtime_ref_for_unit(registry: RegistryService, unit: ManagedUnit) -> RuntimeRef:
+    try:
+        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="unit has invalid runtime metadata") from exc
+    if runtime_ref is None:
+        raise HTTPException(status_code=502, detail="unit has no active runtime")
+    try:
+        validate_runtime_ref(get_settings(), runtime_ref)
+    except RuntimeProxyValidationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return runtime_ref
 
 
 @proxy_router.api_route("/modules/{slug}", methods=["GET", "HEAD"])
 @proxy_router.api_route("/modules/{slug}/{path:path}", methods=["GET", "HEAD"])
 async def proxy_module(slug: str, request: Request, path: str = "", session: Session = Depends(get_db)) -> Response:
-    units = RegistryService(session).get_units(kind="module")
+    registry = RegistryService(session)
+    units = registry.get_units(kind="module")
     unit = next(
         (
             candidate
@@ -70,28 +119,8 @@ async def proxy_module(slug: str, request: Request, path: str = "", session: Ses
     )
     if unit is None:
         raise HTTPException(status_code=404, detail="module not found")
-
-    runtime_ref = unit.discovery_metadata_json.get("runtime_ref") or {}
-    target_url = runtime_ref.get("target_url")
-    if not target_url:
-        raise HTTPException(status_code=502, detail="module has no target url")
-
-    upstream = target_url.rstrip("/")
-    if path:
-        upstream = f"{upstream}/{path}"
-    if request.url.query:
-        upstream = f"{upstream}?{request.url.query}"
-
-    headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_BY_HOP_HEADERS}
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-        upstream_response = await client.request(request.method, upstream, headers=headers)
-
-    return Response(
-        content=upstream_response.content,
-        status_code=upstream_response.status_code,
-        headers={key: value for key, value in upstream_response.headers.items() if key.lower() not in HOP_BY_HOP_HEADERS},
-        media_type=upstream_response.headers.get("content-type"),
-    )
+    runtime_ref = _get_runtime_ref_for_unit(registry, unit)
+    return await _proxy_request(runtime_ref, request, path=path)
 
 
 def _find_service_by_slug(units: Iterable[ManagedUnit], service_slug: str) -> ManagedUnit | None:
@@ -105,14 +134,11 @@ def _find_service_by_slug(units: Iterable[ManagedUnit], service_slug: str) -> Ma
     )
 
 
-async def _proxy_unit_request(target_url: str, request: Request) -> Response:
-    upstream = target_url.rstrip("/")
-    if request.url.query:
-        upstream = f"{upstream}?{request.url.query}"
-
+async def _proxy_request(runtime_ref: RuntimeRef, request: Request, path: str = "") -> Response:
+    upstream = build_runtime_upstream_url(runtime_ref, path=path, query=request.url.query)
     headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_BY_HOP_HEADERS}
     body = await request.body()
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+    async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
         upstream_response = await client.request(
             request.method,
             upstream,
@@ -146,18 +172,13 @@ async def proxy_service(
     path: str = "",
     session: Session = Depends(get_db),
 ) -> Response:
-    units = RegistryService(session).get_units(kind="service")
+    registry = RegistryService(session)
+    units = registry.get_units(kind="service")
     unit = _find_service_by_slug(units, service_slug)
     if unit is None:
         raise HTTPException(status_code=404, detail="service not found")
-
-    runtime_ref = unit.discovery_metadata_json.get("runtime_ref") or {}
-    target_url = runtime_ref.get("target_url")
-    if not target_url:
-        raise HTTPException(status_code=502, detail="service has no target url")
-    if path:
-        target_url = f"{target_url.rstrip('/')}/{path}"
-    return await _proxy_unit_request(target_url, request)
+    runtime_ref = _get_runtime_ref_for_unit(registry, unit)
+    return await _proxy_request(runtime_ref, request, path=path)
 
 
 @proxy_router.api_route(
@@ -174,14 +195,9 @@ async def proxy_unit(
     path: str = "",
     session: Session = Depends(get_db),
 ) -> Response:
-    unit = RegistryService(session).get_unit(unit_id)
+    registry = RegistryService(session)
+    unit = registry.get_unit(unit_id)
     if unit is None or not unit.active_deployment_id:
         raise HTTPException(status_code=404, detail="unit not found")
-
-    runtime_ref = unit.discovery_metadata_json.get("runtime_ref") or {}
-    target_url = runtime_ref.get("target_url")
-    if not target_url:
-        raise HTTPException(status_code=502, detail="unit has no target url")
-    if path:
-        target_url = f"{target_url.rstrip('/')}/{path}"
-    return await _proxy_unit_request(target_url, request)
+    runtime_ref = _get_runtime_ref_for_unit(registry, unit)
+    return await _proxy_request(runtime_ref, request, path=path)
