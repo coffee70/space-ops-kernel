@@ -17,10 +17,21 @@ services:
       timeout: 5s
       retries: 5
 
+  nats:
+    image: nats:2.11-alpine
+    container_name: telemetry-nats
+    ports:
+      - "4222:4222"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4222"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   platform-api:
     build:
-      context: ../space-ops-platform
-      dockerfile: backend/Dockerfile
+      context: ..
+      dockerfile: space-ops-platform/Dockerfile
     container_name: telemetry-platform-api
     ports:
       - "8000:8000"
@@ -29,9 +40,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
+      CONTROL_PLANE_URL: http://control-plane:8100
+      NATS_URL: nats://nats:4222
       CORS_ORIGIN_REGEX: "^http://[^/]+:3000$"
-    volumes:
-      - ../space-ops-apps/vehicle-configurations:/app/vehicle-configurations:ro
     healthcheck:
       test:
         [
@@ -44,6 +55,49 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: control-plane/Dockerfile
+    container_name: telemetry-control-plane
+    ports:
+      - "8100:8100"
+    environment:
+      DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/control_plane_db
+      RUNTIME_ROOT: /app/kernel/runtime
+      PLATFORM_SOURCE_ROOT: /imports/space-ops-platform
+      APPS_SOURCE_ROOT: /imports/space-ops-apps
+      COMPOSE_FILE: /app/kernel/docker-compose.yml
+      COMPOSE_PROJECT_NAME: space-ops-kernel
+      RUNTIME_STRATEGY: docker
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
+      PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PLATFORM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100
+      PLATFORM_NATS_URL: nats://nats:4222
+    volumes:
+      - ./:/app/kernel
+      - ../space-ops-platform:/imports/space-ops-platform:ro
+      - ../space-ops-apps:/imports/space-ops-apps:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=2).read()\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
 
   mission-control-ui:
     build:
@@ -51,14 +105,39 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
     container_name: telemetry-mission-control-ui
     ports:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
       API_SERVER_URL: http://platform-api:8000
+      CONTROL_PLANE_SERVER_URL: http://control-plane:8100
+      OPENVSCODE_SERVER_URL: http://openvscode-server:3000
     depends_on:
       platform-api:
+        condition: service_healthy
+      control-plane:
+        condition: service_healthy
+
+  openvscode-server:
+    image: gitpod/openvscode-server:latest
+    container_name: telemetry-openvscode-server
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "3000"
+      - --without-connection-token
+      - --server-base-path
+      - /workspace
+      - --workspace-folder
+      - /workspace/project
+    volumes:
+      - ./runtime/managed-fork/worktrees/main/project:/workspace/project
+    depends_on:
+      control-plane:
         condition: service_healthy
 
   simulator:

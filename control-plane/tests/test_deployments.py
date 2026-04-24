@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def test_successful_deployment_updates_registry(client) -> None:
+    from app.db import get_session_factory
+    from app.models.runtime import Deployment
+
+    response = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert response.status_code == 200
+    deployment_payload = response.json()
+    assert deployment_payload["status"] == "healthy"
+    assert deployment_payload["registered"] is True
+
+    with get_session_factory()() as session:
+        deployment = session.get(Deployment, deployment_payload["deployment_id"])
+        assert deployment is not None
+        assert deployment.runtime_ref is not None
+        assert deployment.runtime_ref["service_name"] == deployment.runtime_ref["transport"]["host"]
+        assert deployment.runtime_ref["transport"]["port"] == 8080
+        assert deployment.runtime_ref["proxy"]["base_path"] == ""
+        assert deployment.runtime_ref["health"]["path"] == "/health"
+        assert "target_url" not in deployment.runtime_ref
+        assert "health_url" not in deployment.runtime_ref
+        assert "base_url" not in deployment.runtime_ref
+        runtime_ref = deployment.runtime_ref
+
+    registry = client.get("/registry/services")
+    assert registry.status_code == 200
+    services = registry.json()
+    service = next(item for item in services if item["unit_id"] == "derived-telemetry-service")
+    assert service["deployment_status"] == "healthy"
+    assert "runtime_ref" not in service["discovery_metadata_json"]
+    assert service["runtime_endpoint"] == {
+        "service_name": runtime_ref["service_name"],
+        "host": runtime_ref["transport"]["host"],
+        "port": 8080,
+        "proxy_base_path": "",
+        "health_path": "/health",
+    }
+
+
+def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
+    first = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert first.status_code == 200
+    first_deployment_id = first.json()["deployment_id"]
+
+    create_branch = client.post("/code/branches", json={"branch": "feature/bad-manifest", "from_branch": "main"})
+    assert create_branch.status_code == 200
+
+    bad_manifest = """
+unit_id: derived-telemetry-service
+display_name: Derived Telemetry Service
+package_owner: space-ops-platform
+unit_kind: service
+runtime_template: invalid-template
+source_path: project/space-ops-platform/backend/services/derived-telemetry-service
+build:
+  command: pip install -r requirements.txt
+run:
+  command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+health:
+  type: http
+  path: /health
+  port: 8080
+discovery:
+  category: telemetry
+"""
+    write_response = client.put(
+        "/code/file",
+        json={
+            "branch": "feature/bad-manifest",
+            "path": "manifests/units/derived-telemetry-service.yaml",
+            "content": bad_manifest,
+        },
+    )
+    assert write_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": "feature/bad-manifest", "message": "Break manifest"},
+        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
+    )
+    assert commit_response.status_code == 200
+
+    failed = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "feature/bad-manifest"})
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["registered"] is False
+
+    registry = client.get("/registry/services")
+    assert registry.status_code == 200
+    service = next(item for item in registry.json() if item["unit_id"] == "derived-telemetry-service")
+    assert service["active_deployment_id"] == first_deployment_id
+    assert service["deployment_status"] == "healthy"
+
+
+def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:
+    from app.db import get_session_factory
+    from app.models.runtime import Deployment, ManagedUnit
+
+    first = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert first.status_code == 200
+    first_deployment_id = first.json()["deployment_id"]
+
+    with get_session_factory()() as session:
+        unit = session.get(ManagedUnit, "derived-telemetry-service")
+        deployment = session.get(Deployment, first_deployment_id)
+        assert unit is not None
+        assert deployment is not None
+        deployment.runtime_ref = {
+            "service_name": deployment.runtime_ref["service_name"],
+            "compose_file": deployment.runtime_ref["compose_file"],
+            "env_file": deployment.runtime_ref["env_file"],
+            "health_url": "http://legacy-runtime/health",
+            "target_url": "http://legacy-runtime",
+            "base_url": "http://legacy-runtime",
+        }
+        session.add(unit)
+        session.add(deployment)
+        session.commit()
+
+    second = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert second.status_code == 200
+    assert second.json()["status"] == "healthy"
+    assert second.json()["deployment_id"] != first_deployment_id
+
+
+def test_module_deployment_stores_structured_proxy_base_path(client) -> None:
+    from app.db import get_session_factory
+    from app.models.runtime import Deployment, ManagedUnit
+
+    response = client.post("/deployments", json={"unit_id": "battery-efficiency-module", "branch": "main"})
+    assert response.status_code == 200
+    deployment_id = response.json()["deployment_id"]
+
+    with get_session_factory()() as session:
+        deployment = session.get(Deployment, deployment_id)
+        unit = session.get(ManagedUnit, "battery-efficiency-module")
+        assert deployment is not None
+        assert unit is not None
+        assert deployment.runtime_ref is not None
+        assert deployment.runtime_ref["service_name"] == deployment.runtime_ref["transport"]["host"]
+        assert deployment.runtime_ref["transport"]["port"] == 3100
+        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-modules/battery-efficiency"
+        assert "target_url" not in deployment.runtime_ref
+        assert unit.discovery_metadata_json == {
+            "route_slug": "battery-efficiency",
+            "display_name": "Battery Efficiency",
+            "description": "Live battery efficiency workspace module.",
+            "icon_key": "battery",
+            "open_path": "/modules/battery-efficiency",
+        }
+
+
+def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    unit_root = source_root / "project" / "space-ops-apps" / "modules" / "battery-efficiency-module"
+    unit_root.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(get_settings(), object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="battery-efficiency-module",
+            display_name="Battery Efficiency",
+            package_owner="space-ops-apps",
+            unit_kind="module",
+            runtime_template="frontend-module",
+            source_path="project/space-ops-apps/modules/battery-efficiency-module",
+            build=BuildSpec(command="node --check server.js"),
+            run=RunSpec(command="node server.js"),
+            health=HealthSpec(type="http", path="/health", port=3100),
+            discovery={"route_slug": "battery-efficiency"},
+        ),
+        source_root=source_root,
+        service_name="battery-efficiency-module-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    service = next(iter(payload["services"].values()))
+
+    assert service["build"]["context"].endswith("/project/space-ops-apps/modules/battery-efficiency-module")
+    assert service["build"]["dockerfile"] == "Dockerfile"
+
+
+def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    settings = get_settings()
+    settings.ensure_runtime_dirs()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    unit_root = source_root / "project" / "space-ops-platform" / "backend" / "services" / "derived-telemetry-service"
+    unit_root.mkdir(parents=True, exist_ok=True)
+    logs_path = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-logs" / "preview.log"
+    logs_path.parent.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(settings, object(), object())
+    runtime_ref = service._deploy_runtime(
+        deployment_id="dep_preview",
+        manifest=UnitManifest(
+            unit_id="derived-telemetry-service",
+            display_name="Derived Telemetry Service",
+            package_owner="space-ops-platform",
+            unit_kind="service",
+            runtime_template="python-service",
+            source_path="project/space-ops-platform/backend/services/derived-telemetry-service",
+            build=BuildSpec(command="pip install -r requirements.txt"),
+            run=RunSpec(command="uvicorn app.main:app --host 0.0.0.0 --port 8080"),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "derived-telemetry-service"},
+        ),
+        source_root=source_root,
+        logs_path=logs_path,
+    )
+
+    assert runtime_ref.transport.scheme == "http"
+    assert runtime_ref.transport.host == "derived-telemetry-service-dep-preview"
+    assert runtime_ref.transport.port == 8080
+    assert runtime_ref.health.path == "/health"
+    assert runtime_ref.proxy.base_path == ""
+    assert "target_url" not in runtime_ref.model_dump(mode="json")
+
+
+def test_deployment_request_does_not_reimport_seed_source(client, control_plane_env) -> None:
+    file_path = "project/space-ops-platform/backend/services/derived-telemetry-service/app/main.py"
+
+    managed_content = (
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/health')\n"
+        "def health():\n"
+        "    return {'status': 'managed-fork'}\n"
+    )
+
+    write_response = client.put(
+        "/code/file",
+        json={
+            "branch": "main",
+            "path": file_path,
+            "content": managed_content,
+        },
+    )
+    assert write_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": "main", "message": "Update deployable service"},
+        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
+    )
+    assert commit_response.status_code == 200
+    commit_sha = commit_response.json()["commit_sha"]
+
+    mounted_seed_file = (
+        control_plane_env
+        / "space-ops-platform"
+        / "backend/services/derived-telemetry-service/app/main.py"
+    )
+    mounted_seed_file.write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/health')\n"
+        "def health():\n"
+        "    return {'status': 'mounted-seed'}\n",
+        encoding="utf-8",
+    )
+
+    deploy_response = client.post(
+        "/deployments",
+        json={
+            "unit_id": "derived-telemetry-service",
+            "branch": "main",
+            "commit_sha": commit_sha,
+        },
+    )
+    assert deploy_response.status_code == 200
+    assert deploy_response.json()["commit_sha"] == commit_sha
+
+    file_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": file_path},
+    )
+    assert file_response.status_code == 200
+    assert "managed-fork" in file_response.json()["data"]["content"]
+    assert "mounted-seed" not in file_response.json()["data"]["content"]

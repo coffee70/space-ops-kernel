@@ -1,0 +1,25 @@
+unit_id: position-orbit-service
+display_name: Position Orbit Service
+package_owner: space-ops-platform
+unit_kind: service
+runtime_template: python-service
+source_path: project/space-ops-platform
+build:
+  command: pip install -r requirements.txt
+run:
+  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/position-orbit-service --host 0.0.0.0 --port 8080"
+health:
+  type: http
+  path: /health
+  port: 8080
+discovery:
+  service_slug: position-orbit-service
+  category: telemetry
+  api_base_path: /telemetry/position
+  capability_tags:
+    - position
+    - orbit
+  health_endpoint: /health
+  visibility: internal
+  depends_on:
+    - telemetry-ingest-service
