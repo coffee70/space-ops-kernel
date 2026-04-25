@@ -1,5 +1,5 @@
-unit_id: battery-efficiency-application
-display_name: Battery Efficiency
+unit_id: embedded-demo-application
+display_name: Embedded Demo
 package_owner: space-ops-apps
 runtime_kind: frontend_application
 runtime_template: frontend-embedded-application
@@ -14,19 +14,19 @@ health:
   port: 3100
 discovery: {}
 application:
-  application_id: battery-efficiency
-  title: Battery Efficiency
-  description: Live battery efficiency workspace.
-  icon_key: battery
-  icon_color: "#f59e0b"
-  icon_background: "rgba(245, 158, 11, 0.16)"
+  application_id: embedded-demo
+  title: Embedded Demo
+  description: Generic embedded runtime used to verify proxy-backed shell behavior.
+  icon_key: monitor-smartphone
+  icon_color: "#38bdf8"
+  icon_background: "rgba(56, 189, 248, 0.16)"
   application_type: embedded
-  route_path: /apps/battery-efficiency
-  proxy_base_path: /runtime-applications/battery-efficiency
+  route_path: /apps/embedded-demo
+  proxy_base_path: /runtime-applications/embedded-demo
   version: 0.1.0
   enabled: true
   iframe_sandbox: allow-scripts allow-same-origin allow-forms
   iframe_allow: ""
-  sort_order: 80
+  sort_order: 999
   capabilities:
-    - telemetry-analysis
+    - embedded-runtime-demo

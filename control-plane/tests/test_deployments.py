@@ -131,25 +131,25 @@ def test_frontend_application_deployment_stores_structured_proxy_base_path(clien
     from app.db import get_session_factory
     from app.models.runtime import Application, Deployment, ManagedUnit
 
-    response = client.post("/deployments", json={"unit_id": "battery-efficiency-application", "branch": "main"})
+    response = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
     assert response.status_code == 200
     deployment_id = response.json()["deployment_id"]
 
     with get_session_factory()() as session:
         deployment = session.get(Deployment, deployment_id)
-        unit = session.get(ManagedUnit, "battery-efficiency-application")
-        application = session.get(Application, "battery-efficiency")
+        unit = session.get(ManagedUnit, "embedded-demo-application")
+        application = session.get(Application, "embedded-demo")
         assert deployment is not None
         assert unit is not None
         assert application is not None
         assert deployment.runtime_ref is not None
         assert deployment.runtime_ref["service_name"] == deployment.runtime_ref["transport"]["host"]
         assert deployment.runtime_ref["transport"]["port"] == 3100
-        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-applications/battery-efficiency"
+        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-applications/embedded-demo"
         assert "target_url" not in deployment.runtime_ref
         assert unit.discovery_metadata_json == {}
-        assert application.route_path == "/apps/battery-efficiency"
-        assert application.proxy_base_path == "/runtime-applications/battery-efficiency"
+        assert application.route_path == "/apps/embedded-demo"
+        assert application.proxy_base_path == "/runtime-applications/embedded-demo"
 
 
 def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> None:
@@ -164,8 +164,8 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     service = DeploymentService(get_settings(), object(), object())
     payload = service._build_compose_payload(
         manifest=UnitManifest(
-            unit_id="battery-efficiency-application",
-            display_name="Battery Efficiency",
+            unit_id="embedded-demo-application",
+            display_name="Embedded Demo",
             package_owner="space-ops-apps",
             runtime_kind="frontend_application",
             runtime_template="frontend-embedded-application",
@@ -175,25 +175,25 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
             health=HealthSpec(type="http", path="/health", port=3100),
             discovery={},
             application={
-                "application_id": "battery-efficiency",
-                "title": "Battery Efficiency",
-                "description": "Live battery efficiency workspace.",
-                "icon_key": "battery",
-                "icon_color": "#f59e0b",
-                "icon_background": "rgba(245, 158, 11, 0.16)",
+                "application_id": "embedded-demo",
+                "title": "Embedded Demo",
+                "description": "Generic embedded runtime used to verify proxy-backed shell behavior.",
+                "icon_key": "monitor-smartphone",
+                "icon_color": "#38bdf8",
+                "icon_background": "rgba(56, 189, 248, 0.16)",
                 "application_type": "embedded",
-                "route_path": "/apps/battery-efficiency",
-                "proxy_base_path": "/runtime-applications/battery-efficiency",
+                "route_path": "/apps/embedded-demo",
+                "proxy_base_path": "/runtime-applications/embedded-demo",
                 "version": "0.1.0",
                 "enabled": True,
                 "iframe_sandbox": "allow-scripts allow-same-origin allow-forms",
                 "iframe_allow": "",
-                "sort_order": 80,
-                "capabilities": ["telemetry-analysis"],
+                "sort_order": 999,
+                "capabilities": ["embedded-runtime-demo"],
             },
         ),
         source_root=source_root,
-        service_name="battery-efficiency-application-preview",
+        service_name="embedded-demo-application-preview",
         env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
     )
     service = next(iter(payload["services"].values()))

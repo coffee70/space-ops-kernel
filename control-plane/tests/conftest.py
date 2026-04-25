@@ -151,6 +151,17 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             '"sortOrder":50,"owner":"space-ops-apps","capabilities":["development-workspace"]}'
         ),
     )
+    _write(
+        apps_root / "mission-control-ui/src/applications/battery-efficiency/application.seed.json",
+        (
+            '{"applicationId":"battery-efficiency","title":"Battery Efficiency",'
+            '"description":"Example native analysis app built inside the platform shell over Layer 2 telemetry.",'
+            '"iconKey":"battery","iconColor":"#f59e0b","iconBackground":"rgba(245, 158, 11, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/battery-efficiency","loaderKey":"battery-efficiency",'
+            '"version":"0.1.0","enabled":true,"sortOrder":60,"owner":"space-ops-apps",'
+            '"capabilities":["telemetry-analysis","battery-analysis"]}'
+        ),
+    )
 
     monkeypatch.setenv("WORKSPACE_ROOT", str(workspace_root))
     monkeypatch.setenv("PLATFORM_SOURCE_ROOT", str(platform_root))

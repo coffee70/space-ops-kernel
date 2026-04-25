@@ -40,7 +40,6 @@ BOOTSTRAP_UNITS = (
     "ops-events-service",
     "platform-api-gateway",
     "derived-telemetry-service",
-    "battery-efficiency-application",
 )
 
 
