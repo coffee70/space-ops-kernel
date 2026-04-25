@@ -1,7 +1,7 @@
 unit_id: position-orbit-service
 display_name: Position Orbit Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: python-service
 source_path: project/space-ops-platform
 build:

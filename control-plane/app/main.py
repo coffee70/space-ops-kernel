@@ -11,7 +11,11 @@ from app.api import code, deployments, health, registry, templates
 from app.config import get_settings
 from app.db import ensure_database_exists
 from app.migrations import run_migrations
-from app.services.bootstrap_service import ManagedForkBootstrapper, RuntimeBootstrapper
+from app.services.bootstrap_service import (
+    ApplicationRegistryBootstrapper,
+    ManagedForkBootstrapper,
+    RuntimeBootstrapper,
+)
 
 
 @asynccontextmanager
@@ -21,6 +25,7 @@ async def lifespan(_: FastAPI):
     ensure_database_exists()
     run_migrations()
     ManagedForkBootstrapper(settings).ensure_bootstrapped()
+    ApplicationRegistryBootstrapper(settings).ensure_seeded()
     RuntimeBootstrapper(settings).ensure_bootstrapped()
     yield
 
@@ -41,3 +46,4 @@ app.include_router(templates.router)
 app.include_router(deployments.router)
 app.include_router(registry.router)
 app.include_router(registry.proxy_router)
+app.include_router(registry.legacy_proxy_router)

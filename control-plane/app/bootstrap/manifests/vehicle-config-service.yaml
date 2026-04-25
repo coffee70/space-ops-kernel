@@ -1,7 +1,7 @@
 unit_id: vehicle-config-service
 display_name: Vehicle Config Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: python-service
 source_path: project/space-ops-platform
 build:

@@ -40,7 +40,7 @@ BOOTSTRAP_UNITS = (
     "ops-events-service",
     "platform-api-gateway",
     "derived-telemetry-service",
-    "battery-efficiency-module",
+    "battery-efficiency-application",
 )
 
 
@@ -176,3 +176,17 @@ class RuntimeBootstrapper:
         except Exception:
             return False
         return response.status_code < 400
+
+
+class ApplicationRegistryBootstrapper:
+    """Seed built-in platform applications into the control-plane registry."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    def ensure_seeded(self) -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            registry = RegistryService(session)
+            registry.seed_builtin_applications(self.settings.resolved_apps_source_root)
+            session.commit()

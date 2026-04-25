@@ -27,7 +27,7 @@ def build_runtime_health_url(runtime_ref: RuntimeRef) -> str:
 def build_runtime_upstream_url(runtime_ref: RuntimeRef, path: str = "", query: str = "") -> str:
     """Build a proxy upstream URL from structured runtime metadata."""
 
-    joined_path = join_url_path(runtime_ref.proxy.base_path, path)
+    joined_path = join_url_path(runtime_ref.proxy.base_path, validate_runtime_path(path))
     query_suffix = f"?{query}" if query else ""
     return (
         f"{runtime_ref.transport.scheme}://"
@@ -43,6 +43,19 @@ def join_url_path(base_path: str, path: str = "") -> str:
     if not segments:
         return "/"
     return "/" + "/".join(segments)
+
+
+def validate_runtime_path(path: str) -> str:
+    """Reject unsafe proxy path fragments from browser input."""
+
+    if not path:
+        return ""
+    lowered = path.lower()
+    if path.startswith("/") or path.startswith("\\"):
+        raise RuntimeProxyValidationError("proxy path must be relative")
+    if any(token in lowered for token in ("..", "%2f", "%5c", "http://", "https://", "//", "\\\\")):
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    return path
 
 
 def validate_runtime_ref(settings: Settings, runtime_ref: RuntimeRef) -> None:

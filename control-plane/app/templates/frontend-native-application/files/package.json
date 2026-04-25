@@ -1,0 +1,5 @@
+{
+  "name": "{{application_id}}",
+  "version": "0.1.0",
+  "private": true
+}

@@ -1,0 +1,32 @@
+unit_id: battery-efficiency-application
+display_name: Battery Efficiency
+package_owner: space-ops-apps
+runtime_kind: frontend_application
+runtime_template: frontend-embedded-application
+source_path: project/space-ops-apps/modules/battery-efficiency-module
+build:
+  command: node --check server.js
+run:
+  command: node server.js
+health:
+  type: http
+  path: /health
+  port: 3100
+discovery: {}
+application:
+  application_id: battery-efficiency
+  title: Battery Efficiency
+  description: Live battery efficiency workspace.
+  icon_key: battery
+  icon_color: "#f59e0b"
+  icon_background: "rgba(245, 158, 11, 0.16)"
+  application_type: embedded
+  route_path: /apps/battery-efficiency
+  proxy_base_path: /runtime-applications/battery-efficiency
+  version: 0.1.0
+  enabled: true
+  iframe_sandbox: allow-scripts allow-same-origin allow-forms
+  iframe_allow: ""
+  sort_order: 80
+  capabilities:
+    - telemetry-analysis

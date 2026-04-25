@@ -90,23 +90,23 @@ def test_service_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -
     ]
 
 
-def test_module_proxy_prefixes_proxy_base_path(client, monkeypatch) -> None:
+def test_application_proxy_prefixes_proxy_base_path(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    runtime_ref, _ = _active_deployment_payload("battery-efficiency-module")
+    runtime_ref, _ = _active_deployment_payload("battery-efficiency-application")
     calls: list[dict] = []
     response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
     RecordingAsyncClient.calls = calls
     RecordingAsyncClient.response = response
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
 
-    proxied = client.get("/proxy/modules/battery-efficiency/assets/app.js?v=7")
+    proxied = client.get("/runtime-applications/battery-efficiency/assets/app.js?v=7")
 
     assert proxied.status_code == 200
     assert proxied.text == "ok"
     assert calls[0]["url"] == (
         f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
-        "/runtime-modules/battery-efficiency/assets/app.js?v=7"
+        "/runtime-applications/battery-efficiency/assets/app.js?v=7"
     )
     assert calls[0]["follow_redirects"] is False
 

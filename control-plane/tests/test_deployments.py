@@ -53,7 +53,7 @@ def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
 unit_id: derived-telemetry-service
 display_name: Derived Telemetry Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: invalid-template
 source_path: project/space-ops-platform/backend/services/derived-telemetry-service
 build:
@@ -127,31 +127,29 @@ def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:
     assert second.json()["deployment_id"] != first_deployment_id
 
 
-def test_module_deployment_stores_structured_proxy_base_path(client) -> None:
+def test_frontend_application_deployment_stores_structured_proxy_base_path(client) -> None:
     from app.db import get_session_factory
-    from app.models.runtime import Deployment, ManagedUnit
+    from app.models.runtime import Application, Deployment, ManagedUnit
 
-    response = client.post("/deployments", json={"unit_id": "battery-efficiency-module", "branch": "main"})
+    response = client.post("/deployments", json={"unit_id": "battery-efficiency-application", "branch": "main"})
     assert response.status_code == 200
     deployment_id = response.json()["deployment_id"]
 
     with get_session_factory()() as session:
         deployment = session.get(Deployment, deployment_id)
-        unit = session.get(ManagedUnit, "battery-efficiency-module")
+        unit = session.get(ManagedUnit, "battery-efficiency-application")
+        application = session.get(Application, "battery-efficiency")
         assert deployment is not None
         assert unit is not None
+        assert application is not None
         assert deployment.runtime_ref is not None
         assert deployment.runtime_ref["service_name"] == deployment.runtime_ref["transport"]["host"]
         assert deployment.runtime_ref["transport"]["port"] == 3100
-        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-modules/battery-efficiency"
+        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-applications/battery-efficiency"
         assert "target_url" not in deployment.runtime_ref
-        assert unit.discovery_metadata_json == {
-            "route_slug": "battery-efficiency",
-            "display_name": "Battery Efficiency",
-            "description": "Live battery efficiency workspace module.",
-            "icon_key": "battery",
-            "open_path": "/modules/battery-efficiency",
-        }
+        assert unit.discovery_metadata_json == {}
+        assert application.route_path == "/apps/battery-efficiency"
+        assert application.proxy_base_path == "/runtime-applications/battery-efficiency"
 
 
 def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> None:
@@ -166,19 +164,36 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     service = DeploymentService(get_settings(), object(), object())
     payload = service._build_compose_payload(
         manifest=UnitManifest(
-            unit_id="battery-efficiency-module",
+            unit_id="battery-efficiency-application",
             display_name="Battery Efficiency",
             package_owner="space-ops-apps",
-            unit_kind="module",
-            runtime_template="frontend-module",
+            runtime_kind="frontend_application",
+            runtime_template="frontend-embedded-application",
             source_path="project/space-ops-apps/modules/battery-efficiency-module",
             build=BuildSpec(command="node --check server.js"),
             run=RunSpec(command="node server.js"),
             health=HealthSpec(type="http", path="/health", port=3100),
-            discovery={"route_slug": "battery-efficiency"},
+            discovery={},
+            application={
+                "application_id": "battery-efficiency",
+                "title": "Battery Efficiency",
+                "description": "Live battery efficiency workspace.",
+                "icon_key": "battery",
+                "icon_color": "#f59e0b",
+                "icon_background": "rgba(245, 158, 11, 0.16)",
+                "application_type": "embedded",
+                "route_path": "/apps/battery-efficiency",
+                "proxy_base_path": "/runtime-applications/battery-efficiency",
+                "version": "0.1.0",
+                "enabled": True,
+                "iframe_sandbox": "allow-scripts allow-same-origin allow-forms",
+                "iframe_allow": "",
+                "sort_order": 80,
+                "capabilities": ["telemetry-analysis"],
+            },
         ),
         source_root=source_root,
-        service_name="battery-efficiency-module-preview",
+        service_name="battery-efficiency-application-preview",
         env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
     )
     service = next(iter(payload["services"].values()))
@@ -207,7 +222,7 @@ def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
             unit_id="derived-telemetry-service",
             display_name="Derived Telemetry Service",
             package_owner="space-ops-platform",
-            unit_kind="service",
+            runtime_kind="service",
             runtime_template="python-service",
             source_path="project/space-ops-platform/backend/services/derived-telemetry-service",
             build=BuildSpec(command="pip install -r requirements.txt"),

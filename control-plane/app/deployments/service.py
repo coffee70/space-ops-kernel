@@ -180,9 +180,8 @@ class DeploymentService:
 
     @staticmethod
     def _build_proxy_base_path(manifest: UnitManifest) -> str:
-        if manifest.unit_kind == "module":
-            route_slug = manifest.discovery.get("route_slug", manifest.unit_id)
-            return f"/runtime-modules/{route_slug}"
+        if manifest.runtime_kind == "frontend_application" and manifest.application:
+            return manifest.application.proxy_base_path or ""
         return ""
 
     def _run_health_check(self, runtime_ref: RuntimeRef) -> None:
@@ -249,10 +248,10 @@ class DeploymentService:
                     "NATS_URL": self.settings.platform_nats_url,
                 }
             )
-        if manifest.unit_kind == "module":
-            route_slug = manifest.discovery.get("route_slug", manifest.unit_id)
-            env["MODULE_BASE_PATH"] = f"/runtime-modules/{route_slug}"
-            env["MODULE_ROUTE_SLUG"] = route_slug
+        if manifest.runtime_kind == "frontend_application" and manifest.application:
+            env["APPLICATION_ID"] = manifest.application.application_id
+            if manifest.application.proxy_base_path:
+                env["APPLICATION_PROXY_BASE_PATH"] = manifest.application.proxy_base_path
             env["SERVICE_NAME"] = service_name
         return env
 

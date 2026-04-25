@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -19,14 +19,14 @@ def utcnow() -> datetime:
 
 
 class ManagedUnit(Base):
-    """Canonical runtime registry entry."""
+    """Canonical managed runtime entry."""
 
     __tablename__ = "managed_units"
 
     unit_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     package_owner: Mapped[str] = mapped_column(String(64), nullable=False)
-    unit_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    runtime_kind: Mapped[str] = mapped_column(String(64), nullable=False)
     runtime_template: Mapped[str] = mapped_column(String(64), nullable=False)
     source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     active_deployment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -38,7 +38,7 @@ class ManagedUnit(Base):
 
 
 class Deployment(Base):
-    """Deployment record."""
+    """Managed runtime deployment record."""
 
     __tablename__ = "deployments"
 
@@ -58,7 +58,7 @@ class Deployment(Base):
 
 
 class DeploymentEvent(Base):
-    """Deployment event log."""
+    """Managed runtime deployment event log."""
 
     __tablename__ = "deployment_events"
 
@@ -72,7 +72,7 @@ class DeploymentEvent(Base):
 
 
 class UnitHealthSnapshot(Base):
-    """Point-in-time unit health."""
+    """Point-in-time managed runtime health."""
 
     __tablename__ = "unit_health_snapshots"
 
@@ -83,3 +83,79 @@ class UnitHealthSnapshot(Base):
     details_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
+
+class Application(Base):
+    """Database-backed platform application registry entry."""
+
+    __tablename__ = "applications"
+
+    application_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(String(320), nullable=False)
+    icon_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    icon_color: Mapped[str] = mapped_column(String(64), nullable=False)
+    icon_background: Mapped[str] = mapped_column(String(64), nullable=False)
+    application_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    route_path: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    loader_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    embedded_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    proxy_base_path: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    iframe_sandbox: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    iframe_allow: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    health_status: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    deployment_status: Mapped[str] = mapped_column(String(64), nullable=False, default="seeded")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ApplicationCapability(Base):
+    """Capabilities exposed by an application registry entry."""
+
+    __tablename__ = "application_capabilities"
+
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.application_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    capability: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
+class ApplicationDeployment(Base):
+    """Frontend application deployment runtime metadata."""
+
+    __tablename__ = "application_deployments"
+
+    deployment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.application_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_ref: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    runtime_ref: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    health_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ApplicationAuditEvent(Base):
+    """Application registry audit trail."""
+
+    __tablename__ = "application_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.application_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

@@ -1,7 +1,7 @@
 unit_id: derived-telemetry-service
 display_name: Derived Telemetry Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: python-service
 source_path: project/space-ops-platform/backend/services/derived-telemetry-service
 build:
