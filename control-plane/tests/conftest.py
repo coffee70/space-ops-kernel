@@ -94,11 +94,11 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health():\n    return {'status': 'ok'}\n",
     )
     _write(
-        apps_root / "modules/battery-efficiency-module/Dockerfile",
+        apps_root / "applications/embedded-demo-application/Dockerfile",
         "FROM node:20-alpine\nWORKDIR /app\nCOPY . /app\nCMD [\"node\", \"server.js\"]\n",
     )
     _write(
-        apps_root / "modules/battery-efficiency-module/server.js",
+        apps_root / "applications/embedded-demo-application/server.js",
         "const basePath=(process.env.APPLICATION_PROXY_BASE_PATH||'/').replace(/\\/+$/,'')||'/';"
         "require('http').createServer((req,res)=>{if(req.url==='/health'){res.end('{\"status\":\"ok\"}');return;}"
         "const requestPath=req.url.split('?')[0];"

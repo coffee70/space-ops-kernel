@@ -28,7 +28,6 @@ from app.services.proxy_targets import (
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 proxy_router = APIRouter(prefix="/runtime-applications", tags=["runtime-applications"])
-legacy_proxy_router = APIRouter(prefix="/proxy", tags=["proxy"])
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -103,9 +102,9 @@ def _get_runtime_ref_for_unit(registry: RegistryService, unit: ManagedUnit) -> R
     try:
         runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="unit has invalid runtime metadata") from exc
+        raise HTTPException(status_code=502, detail="service has invalid runtime metadata") from exc
     if runtime_ref is None:
-        raise HTTPException(status_code=502, detail="unit has no active runtime")
+        raise HTTPException(status_code=502, detail="service has no active runtime")
     try:
         validate_runtime_ref(get_settings(), runtime_ref)
     except RuntimeProxyValidationError as exc:
@@ -118,10 +117,20 @@ def _find_service_by_slug(units: Iterable[ManagedUnit], service_slug: str) -> Ma
         (
             candidate
             for candidate in units
-            if candidate.discovery_metadata_json.get("service_slug") == service_slug and candidate.active_deployment_id
+            if candidate.discovery_metadata_json.get("service_slug") == service_slug
         ),
         None,
     )
+
+
+@router.get("/services/{service_slug}", response_model=RegistryUnitResponse)
+def get_service(service_slug: str, session: Session = Depends(get_db)) -> RegistryUnitResponse:
+    registry = RegistryService(session)
+    unit = _find_service_by_slug(registry.get_units(kind="service"), service_slug)
+    if unit is None:
+        raise HTTPException(status_code=404, detail="service not found")
+    _get_runtime_ref_for_unit(registry, unit)
+    return _serialize_unit(unit, registry)
 
 
 def _get_runtime_ref_for_application(registry: RegistryService, application_id: str) -> RuntimeRef:
@@ -205,51 +214,4 @@ async def proxy_application(
     registry = RegistryService(session)
     runtime_ref = _get_runtime_ref_for_application(registry, application_id)
     raw_path = _extract_raw_proxy_path(request, f"/runtime-applications/{application_id}")
-    return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)
-
-
-@legacy_proxy_router.api_route(
-    "/services/{service_slug}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-)
-@legacy_proxy_router.api_route(
-    "/services/{service_slug}/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-)
-async def proxy_service(
-    service_slug: str,
-    request: Request,
-    path: str = "",
-    session: Session = Depends(get_db),
-) -> Response:
-    registry = RegistryService(session)
-    units = registry.get_units(kind="service")
-    unit = _find_service_by_slug(units, service_slug)
-    if unit is None:
-        raise HTTPException(status_code=404, detail="service not found")
-    runtime_ref = _get_runtime_ref_for_unit(registry, unit)
-    raw_path = _extract_raw_proxy_path(request, f"/proxy/services/{service_slug}")
-    return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)
-
-
-@legacy_proxy_router.api_route(
-    "/units/{unit_id}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-)
-@legacy_proxy_router.api_route(
-    "/units/{unit_id}/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-)
-async def proxy_unit(
-    unit_id: str,
-    request: Request,
-    path: str = "",
-    session: Session = Depends(get_db),
-) -> Response:
-    registry = RegistryService(session)
-    unit = registry.get_unit(unit_id)
-    if unit is None or not unit.active_deployment_id:
-        raise HTTPException(status_code=404, detail="unit not found")
-    runtime_ref = _get_runtime_ref_for_unit(registry, unit)
-    raw_path = _extract_raw_proxy_path(request, f"/proxy/units/{unit_id}")
     return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)

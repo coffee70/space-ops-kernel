@@ -3,7 +3,7 @@ display_name: Embedded Demo
 package_owner: space-ops-apps
 runtime_kind: frontend_application
 runtime_template: frontend-embedded-application
-source_path: project/space-ops-apps/modules/battery-efficiency-module
+source_path: project/space-ops-apps/applications/embedded-demo-application
 build:
   command: node --check server.js
 run:

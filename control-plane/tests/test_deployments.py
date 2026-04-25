@@ -158,7 +158,7 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
 
     source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
-    unit_root = source_root / "project" / "space-ops-apps" / "modules" / "battery-efficiency-module"
+    unit_root = source_root / "project" / "space-ops-apps" / "applications" / "embedded-demo-application"
     unit_root.mkdir(parents=True, exist_ok=True)
 
     service = DeploymentService(get_settings(), object(), object())
@@ -169,7 +169,7 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
             package_owner="space-ops-apps",
             runtime_kind="frontend_application",
             runtime_template="frontend-embedded-application",
-            source_path="project/space-ops-apps/modules/battery-efficiency-module",
+            source_path="project/space-ops-apps/applications/embedded-demo-application",
             build=BuildSpec(command="node --check server.js"),
             run=RunSpec(command="node server.js"),
             health=HealthSpec(type="http", path="/health", port=3100),
@@ -198,7 +198,7 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     )
     service = next(iter(payload["services"].values()))
 
-    assert service["build"]["context"].endswith("/project/space-ops-apps/modules/battery-efficiency-module")
+    assert service["build"]["context"].endswith("/project/space-ops-apps/applications/embedded-demo-application")
     assert service["build"]["dockerfile"] == "Dockerfile"
 
 

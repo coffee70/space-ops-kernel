@@ -102,6 +102,10 @@ class Settings(BaseSettings):
         return self.generated_root / "env"
 
     @property
+    def bootstrap_seed_state_path(self) -> Path:
+        return self.generated_root / "bootstrap-seed-state.json"
+
+    @property
     def deployment_logs_root(self) -> Path:
         return self.resolved_runtime_root / "deployment-logs"
 
