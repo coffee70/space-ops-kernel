@@ -143,9 +143,23 @@ def _get_runtime_ref_for_application(registry: RegistryService, application_id: 
     return runtime_ref
 
 
-async def _proxy_request(runtime_ref: RuntimeRef, request: Request, path: str = "") -> Response:
+def _extract_raw_proxy_path(request: Request, route_prefix: str) -> str:
+    raw_path = request.scope.get("raw_path")
+    if not raw_path:
+        return ""
+    decoded_raw_path = raw_path.decode("latin-1")
+    if decoded_raw_path == route_prefix:
+        return ""
+    if decoded_raw_path.startswith(f"{route_prefix}/"):
+        return decoded_raw_path[len(route_prefix) + 1 :]
+    return ""
+
+
+async def _proxy_request(runtime_ref: RuntimeRef, request: Request, path: str = "", raw_path: str = "") -> Response:
     try:
         validated_path = validate_runtime_path(path)
+        if raw_path:
+            validate_runtime_path(raw_path)
     except RuntimeProxyValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -190,7 +204,8 @@ async def proxy_application(
         raise HTTPException(status_code=404, detail="application not found")
     registry = RegistryService(session)
     runtime_ref = _get_runtime_ref_for_application(registry, application_id)
-    return await _proxy_request(runtime_ref, request, path=path)
+    raw_path = _extract_raw_proxy_path(request, f"/runtime-applications/{application_id}")
+    return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)
 
 
 @legacy_proxy_router.api_route(
@@ -213,7 +228,8 @@ async def proxy_service(
     if unit is None:
         raise HTTPException(status_code=404, detail="service not found")
     runtime_ref = _get_runtime_ref_for_unit(registry, unit)
-    return await _proxy_request(runtime_ref, request, path=path)
+    raw_path = _extract_raw_proxy_path(request, f"/proxy/services/{service_slug}")
+    return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)
 
 
 @legacy_proxy_router.api_route(
@@ -235,4 +251,5 @@ async def proxy_unit(
     if unit is None or not unit.active_deployment_id:
         raise HTTPException(status_code=404, detail="unit not found")
     runtime_ref = _get_runtime_ref_for_unit(registry, unit)
-    return await _proxy_request(runtime_ref, request, path=path)
+    raw_path = _extract_raw_proxy_path(request, f"/proxy/units/{unit_id}")
+    return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)

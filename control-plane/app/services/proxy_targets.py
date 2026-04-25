@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ipaddress import ip_address
+from urllib.parse import unquote
 
 from app.config import Settings
 from app.schemas import RuntimeEndpointSummary, RuntimeRef
@@ -50,12 +51,41 @@ def validate_runtime_path(path: str) -> str:
 
     if not path:
         return ""
+
+    candidates = [path, *_decode_runtime_path_candidates(path)]
+    for candidate in candidates:
+        _validate_runtime_path_candidate(candidate)
+    return path
+
+
+def _decode_runtime_path_candidates(path: str, max_passes: int = 3) -> list[str]:
+    decoded_values: list[str] = []
+    candidate = path
+    for _ in range(max_passes):
+        decoded = unquote(candidate)
+        if decoded == candidate:
+            break
+        decoded_values.append(decoded)
+        candidate = decoded
+    return decoded_values
+
+
+def _validate_runtime_path_candidate(path: str) -> None:
     lowered = path.lower()
     if path.startswith("/") or path.startswith("\\"):
         raise RuntimeProxyValidationError("proxy path must be relative")
-    if any(token in lowered for token in ("..", "%2f", "%5c", "http://", "https://", "//", "\\\\")):
+    if any(token in lowered for token in ("http://", "https://", "//", "\\\\")):
         raise RuntimeProxyValidationError("proxy path is not allowed")
-    return path
+    if lowered.startswith("//") or lowered.startswith("\\\\"):
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if ".." in path:
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if "\\" in path or "%5c" in lowered:
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if "%2f" in lowered or "/" in path and "//" in path:
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if any(segment == ".." for segment in path.split("/")):
+        raise RuntimeProxyValidationError("proxy path is not allowed")
 
 
 def validate_runtime_ref(settings: Settings, runtime_ref: RuntimeRef) -> None:

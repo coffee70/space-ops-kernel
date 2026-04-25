@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from unittest.mock import ANY
 
 
@@ -111,6 +112,38 @@ def test_application_proxy_prefixes_proxy_base_path(client, monkeypatch) -> None
         "/runtime-applications/embedded-demo/assets/app.js?v=7"
     )
     assert calls[0]["follow_redirects"] is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../secrets",
+        "%2e%2e/secrets",
+        "%252e%252e/secrets",
+        "a//b",
+        "a%2fb",
+        r"a\b",
+        "a%5cb",
+        "http:%2f%2fevil.example/x",
+        "https:%2f%2fevil.example/x",
+    ],
+)
+def test_application_proxy_rejects_unsafe_path_fragments(client, monkeypatch, path: str) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
+    assert deployment.status_code == 200
+
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get(f"/runtime-applications/embedded-demo/{path}")
+
+    assert proxied.status_code in {400, 404}
+    assert calls == []
 
 
 def test_unit_proxy_returns_404_without_active_deployment(client) -> None:
