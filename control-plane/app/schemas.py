@@ -323,11 +323,6 @@ class SeededApplicationDefinition(PlatformApplicationDefinition):
     """Strict seed/application manifest payload."""
 
 
-class ApplicationRegistryMutationResponse(StrictBaseModel):
-    application_id: str = Field(alias="applicationId")
-    enabled: bool
-
-
 class ApplicationManifestDefinition(StrictBaseModel):
     """Frontend application metadata embedded in deployment manifests."""
 

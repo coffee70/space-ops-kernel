@@ -357,21 +357,6 @@ class RegistryService:
         )
         return application
 
-    def set_application_enabled(self, application_id: str, enabled: bool) -> Application:
-        application = self.get_application(application_id)
-        if application is None:
-            raise KeyError(application_id)
-        application.enabled = enabled
-        application.updated_at = utcnow()
-        self.session.flush()
-        self.record_application_audit(
-            application_id,
-            "enabled" if enabled else "disabled",
-            "Application enabled" if enabled else "Application disabled",
-            details={"enabled": enabled},
-        )
-        return application
-
     def get_active_application_deployment(self, application_id: str) -> ApplicationDeployment | None:
         return (
             self.session.query(ApplicationDeployment)

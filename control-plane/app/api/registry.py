@@ -14,7 +14,6 @@ from app.models.runtime import ManagedUnit
 from app.registry.service import RegistryService
 from app.schemas import (
     APPLICATION_ID_PATTERN,
-    ApplicationRegistryMutationResponse,
     PlatformApplicationDefinition,
     RegistryUnitResponse,
     RuntimeRef,
@@ -86,32 +85,6 @@ def get_application(application_id: str, session: Session = Depends(get_db)) -> 
     if application is None:
         raise HTTPException(status_code=404, detail="application not found")
     return registry.serialize_application(application)
-
-
-@router.post("/applications/{application_id}/enable", response_model=ApplicationRegistryMutationResponse)
-def enable_application(
-    application_id: str,
-    session: Session = Depends(get_db),
-) -> ApplicationRegistryMutationResponse:
-    registry = RegistryService(session)
-    try:
-        application = registry.set_application_enabled(application_id, True)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="application not found") from exc
-    return ApplicationRegistryMutationResponse(applicationId=application.application_id, enabled=application.enabled)
-
-
-@router.post("/applications/{application_id}/disable", response_model=ApplicationRegistryMutationResponse)
-def disable_application(
-    application_id: str,
-    session: Session = Depends(get_db),
-) -> ApplicationRegistryMutationResponse:
-    registry = RegistryService(session)
-    try:
-        application = registry.set_application_enabled(application_id, False)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="application not found") from exc
-    return ApplicationRegistryMutationResponse(applicationId=application.application_id, enabled=application.enabled)
 
 
 @router.get("/units", response_model=list[RegistryUnitResponse])
