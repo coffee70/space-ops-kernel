@@ -225,7 +225,7 @@ def test_proxy_rejects_host_service_name_mismatch(client) -> None:
     assert proxied.json()["detail"] == "runtime proxy host must match service_name"
 
 
-def test_registry_service_lookup_returns_active_runtime_endpoint(client) -> None:
+def test_registry_service_lookup_returns_safe_service_metadata(client) -> None:
     deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
     assert deployment.status_code == 200
 
@@ -233,14 +233,17 @@ def test_registry_service_lookup_returns_active_runtime_endpoint(client) -> None
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["unit_id"] == "vehicle-config-service"
-    assert payload["runtime_endpoint"] == {
-        "service_name": payload["runtime_endpoint"]["host"],
-        "host": payload["runtime_endpoint"]["host"],
-        "port": 8080,
-        "proxy_base_path": "",
-        "health_path": "/health",
-    }
+    assert payload["serviceSlug"] == "vehicle-config-service"
+    assert payload["unitId"] == "vehicle-config-service"
+    assert payload["deploymentStatus"] == "healthy"
+    assert payload["healthStatus"] == "passing"
+    assert "runtime_endpoint" not in payload
+    assert "runtimeEndpoint" not in payload
+    assert "host" not in payload
+    assert "port" not in payload
+    assert "active_deployment_id" not in payload
+    assert "source_path" not in payload
+    assert "discovery_metadata_json" not in payload
 
 
 def test_registry_service_lookup_returns_404_for_unknown_slug(client) -> None:
@@ -250,12 +253,158 @@ def test_registry_service_lookup_returns_404_for_unknown_slug(client) -> None:
     assert response.json()["detail"] == "service not found"
 
 
-def test_registry_service_lookup_returns_502_without_runtime(client) -> None:
+def test_registry_service_lookup_does_not_require_active_runtime(client) -> None:
     deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
     assert deployment.status_code == 200
     _set_active_service_runtime_ref("vehicle-config-service", None)
 
     response = client.get("/registry/services/vehicle-config-service")
+
+    assert response.status_code == 200
+    assert response.json()["serviceSlug"] == "vehicle-config-service"
+
+
+def test_internal_service_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    runtime_ref, _ = _active_deployment_payload("vehicle-config-service")
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/internal/runtime-services/vehicle-config-service/vehicle-configs?limit=10")
+
+    assert proxied.status_code == 200
+    assert proxied.json() == {"ok": True}
+    assert calls == [
+        {
+            "method": "GET",
+            "url": (
+                f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
+                "/vehicle-configs?limit=10"
+            ),
+            "headers": ANY,
+            "content": None,
+            "follow_redirects": False,
+            "timeout": 30.0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../secrets",
+        "%2e%2e/secrets",
+        "%252e%252e/secrets",
+        "a//b",
+        "a%2fb",
+        r"a\b",
+        "a%5cb",
+        "http:%2f%2fevil.example/x",
+        "https:%2f%2fevil.example/x",
+    ],
+)
+def test_internal_service_proxy_rejects_unsafe_path_fragments(client, monkeypatch, path: str) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get(f"/internal/runtime-services/vehicle-config-service/{path}")
+
+    assert proxied.status_code in {400, 404}
+    assert calls == []
+
+
+def test_internal_service_proxy_strips_sensitive_headers(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get(
+        "/internal/runtime-services/vehicle-config-service/vehicle-configs",
+        headers={
+            "authorization": "Bearer secret",
+            "cookie": "session=secret",
+            "x-api-key": "secret",
+            "x-forwarded-user": "operator",
+            "connection": "close",
+        },
+    )
+
+    assert proxied.status_code == 200
+    forwarded_headers = {key.lower(): value for key, value in calls[0]["headers"].items()}
+    assert "authorization" not in forwarded_headers
+    assert "cookie" not in forwarded_headers
+    assert "x-api-key" not in forwarded_headers
+    assert "x-forwarded-user" not in forwarded_headers
+    assert "connection" not in forwarded_headers
+
+
+def test_internal_service_proxy_does_not_follow_redirects(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    calls: list[dict] = []
+    response = httpx.Response(
+        307,
+        content=b"",
+        headers={"location": "http://should-not-be-followed/internal", "content-type": "text/plain"},
+    )
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/internal/runtime-services/vehicle-config-service", follow_redirects=False)
+
+    assert proxied.status_code == 307
+    assert proxied.headers["location"] == "http://should-not-be-followed/internal"
+    assert calls[0]["follow_redirects"] is False
+
+
+def test_internal_service_proxy_rejects_host_service_name_mismatch(client) -> None:
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    runtime_ref, _ = _active_deployment_payload("vehicle-config-service")
+    runtime_ref["transport"]["host"] = "unexpected-runtime"
+    _set_active_service_runtime_ref("vehicle-config-service", runtime_ref)
+
+    proxied = client.get("/internal/runtime-services/vehicle-config-service")
+
+    assert proxied.status_code == 502
+    assert proxied.json()["detail"] == "runtime proxy host must match service_name"
+
+
+def test_internal_service_proxy_returns_404_for_unknown_service_slug(client) -> None:
+    response = client.get("/internal/runtime-services/unknown-service/health")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "service not found"
+
+
+def test_internal_service_proxy_returns_502_without_runtime(client) -> None:
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    _set_active_service_runtime_ref("vehicle-config-service", None)
+
+    response = client.get("/internal/runtime-services/vehicle-config-service/health")
 
     assert response.status_code == 502
     assert response.json()["detail"] == "service has no active runtime"

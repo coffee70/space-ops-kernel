@@ -6,7 +6,7 @@ from ipaddress import ip_address
 from urllib.parse import unquote
 
 from app.config import Settings
-from app.schemas import RuntimeEndpointSummary, RuntimeRef
+from app.schemas import RuntimeRef
 
 LOCALHOST_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
@@ -122,14 +122,3 @@ def validate_runtime_ref(settings: Settings, runtime_ref: RuntimeRef) -> None:
     if runtime_ref.proxy.base_path and not runtime_ref.proxy.base_path.startswith("/"):
         raise RuntimeProxyValidationError("runtime proxy base_path must be absolute")
 
-
-def runtime_endpoint_summary(runtime_ref: RuntimeRef) -> RuntimeEndpointSummary:
-    """Expose a safe summary of the active runtime endpoint."""
-
-    return RuntimeEndpointSummary(
-        service_name=runtime_ref.service_name,
-        host=runtime_ref.transport.host,
-        port=runtime_ref.transport.port,
-        proxy_base_path=runtime_ref.proxy.base_path,
-        health_path=runtime_ref.health.path,
-    )

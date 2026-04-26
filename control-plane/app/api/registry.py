@@ -15,19 +15,21 @@ from app.registry.service import RegistryService
 from app.schemas import (
     APPLICATION_ID_PATTERN,
     PlatformApplicationDefinition,
-    RegistryUnitResponse,
+    RegistryServiceResponse,
+    RegistryUnitSummaryResponse,
     RuntimeRef,
+    SERVICE_SLUG_PATTERN,
 )
 from app.services.proxy_targets import (
     RuntimeProxyValidationError,
     build_runtime_upstream_url,
-    runtime_endpoint_summary,
     validate_runtime_path,
     validate_runtime_ref,
 )
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 proxy_router = APIRouter(prefix="/runtime-applications", tags=["runtime-applications"])
+internal_proxy_router = APIRouter(prefix="/internal/runtime-services", tags=["internal-runtime-services"])
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -40,33 +42,97 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+SENSITIVE_FORWARD_HEADERS = {
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-forwarded-user",
+    "x-forwarded-email",
+    "x-forwarded-access-token",
+}
 
 
-def _serialize_unit(unit: ManagedUnit, registry: RegistryService) -> RegistryUnitResponse:
-    runtime_endpoint = None
-    try:
-        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
-    except Exception:
-        runtime_ref = None
-    if runtime_ref is not None:
-        runtime_endpoint = runtime_endpoint_summary(runtime_ref)
-    return RegistryUnitResponse(
+def _safe_discovery_text(discovery: dict, field: str) -> str | None:
+    value = discovery.get(field)
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > 320:
+        return None
+    return value
+
+
+def _safe_discovery_capabilities(discovery: dict) -> list[str]:
+    capabilities = discovery.get("capabilities")
+    if not isinstance(capabilities, list):
+        return []
+    safe: list[str] = []
+    seen: set[str] = set()
+    for capability in capabilities:
+        if not isinstance(capability, str):
+            continue
+        value = capability.strip()
+        if not value or len(value) > 64 or value in seen:
+            continue
+        seen.add(value)
+        safe.append(value)
+    return safe
+
+
+def _serialize_service(unit: ManagedUnit) -> RegistryServiceResponse:
+    discovery = unit.discovery_metadata_json if isinstance(unit.discovery_metadata_json, dict) else {}
+    service_slug = discovery.get("service_slug")
+    if not isinstance(service_slug, str) or not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
+        service_slug = unit.unit_id
+    return RegistryServiceResponse(
+        serviceSlug=service_slug,
+        unitId=unit.unit_id,
+        displayName=unit.display_name,
+        packageOwner=unit.package_owner,
+        runtimeKind=unit.runtime_kind,
+        runtimeTemplate=unit.runtime_template,
+        deploymentStatus=unit.deployment_status,
+        healthStatus=unit.health_status,
+        category=_safe_discovery_text(discovery, "category"),
+        description=_safe_discovery_text(discovery, "description"),
+        capabilities=_safe_discovery_capabilities(discovery),
+    )
+
+
+def _serialize_services(units: Iterable[ManagedUnit]) -> list[RegistryServiceResponse]:
+    return [_serialize_service(unit) for unit in units]
+
+
+def _serialize_unit_summary(unit: ManagedUnit, registry: RegistryService) -> RegistryUnitSummaryResponse:
+    discovery = unit.discovery_metadata_json if isinstance(unit.discovery_metadata_json, dict) else {}
+    service_slug = discovery.get("service_slug") if unit.runtime_kind == "service" else None
+    if not isinstance(service_slug, str) or not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
+        service_slug = None
+    application_id = None
+    if unit.runtime_kind == "frontend_application":
+        for application in registry.get_applications():
+            deployment = registry.get_active_application_deployment(application.application_id)
+            if deployment is not None and deployment.deployment_id == unit.active_deployment_id:
+                application_id = application.application_id
+                break
+    return RegistryUnitSummaryResponse(
         unit_id=unit.unit_id,
         display_name=unit.display_name,
         package_owner=unit.package_owner,
         runtime_kind=unit.runtime_kind,
         runtime_template=unit.runtime_template,
-        source_path=unit.source_path,
-        active_deployment_id=unit.active_deployment_id,
         deployment_status=unit.deployment_status,
         health_status=unit.health_status,
-        discovery_metadata_json=unit.discovery_metadata_json,
-        runtime_endpoint=runtime_endpoint,
+        service_slug=service_slug,
+        application_id=application_id,
+        category=_safe_discovery_text(discovery, "category"),
+        description=_safe_discovery_text(discovery, "description"),
     )
 
 
-def _serialize_units(units: Iterable[ManagedUnit], registry: RegistryService) -> list[RegistryUnitResponse]:
-    return [_serialize_unit(unit, registry) for unit in units]
+def _serialize_unit_summaries(units: Iterable[ManagedUnit], registry: RegistryService) -> list[RegistryUnitSummaryResponse]:
+    return [_serialize_unit_summary(unit, registry) for unit in units]
 
 
 @router.get("/applications", response_model=list[PlatformApplicationDefinition])
@@ -86,16 +152,16 @@ def get_application(application_id: str, session: Session = Depends(get_db)) -> 
     return registry.serialize_application(application)
 
 
-@router.get("/units", response_model=list[RegistryUnitResponse])
-def get_units(session: Session = Depends(get_db)) -> list[RegistryUnitResponse]:
+@router.get("/units", response_model=list[RegistryUnitSummaryResponse])
+def get_units(session: Session = Depends(get_db)) -> list[RegistryUnitSummaryResponse]:
     registry = RegistryService(session)
-    return _serialize_units(registry.get_units(), registry)
+    return _serialize_unit_summaries(registry.get_units(), registry)
 
 
-@router.get("/services", response_model=list[RegistryUnitResponse])
-def get_services(session: Session = Depends(get_db)) -> list[RegistryUnitResponse]:
+@router.get("/services", response_model=list[RegistryServiceResponse])
+def get_services(session: Session = Depends(get_db)) -> list[RegistryServiceResponse]:
     registry = RegistryService(session)
-    return _serialize_units(registry.get_units(kind="service"), registry)
+    return _serialize_services(registry.get_units(kind="service"))
 
 
 def _get_runtime_ref_for_unit(registry: RegistryService, unit: ManagedUnit) -> RuntimeRef:
@@ -123,14 +189,15 @@ def _find_service_by_slug(units: Iterable[ManagedUnit], service_slug: str) -> Ma
     )
 
 
-@router.get("/services/{service_slug}", response_model=RegistryUnitResponse)
-def get_service(service_slug: str, session: Session = Depends(get_db)) -> RegistryUnitResponse:
+@router.get("/services/{service_slug}", response_model=RegistryServiceResponse)
+def get_service(service_slug: str, session: Session = Depends(get_db)) -> RegistryServiceResponse:
+    if not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
+        raise HTTPException(status_code=404, detail="service not found")
     registry = RegistryService(session)
     unit = _find_service_by_slug(registry.get_units(kind="service"), service_slug)
     if unit is None:
         raise HTTPException(status_code=404, detail="service not found")
-    _get_runtime_ref_for_unit(registry, unit)
-    return _serialize_unit(unit, registry)
+    return _serialize_service(unit)
 
 
 def _get_runtime_ref_for_application(registry: RegistryService, application_id: str) -> RuntimeRef:
@@ -164,7 +231,21 @@ def _extract_raw_proxy_path(request: Request, route_prefix: str) -> str:
     return ""
 
 
-async def _proxy_request(runtime_ref: RuntimeRef, request: Request, path: str = "", raw_path: str = "") -> Response:
+def authorize_internal_service_proxy(request: Request, service_slug: str) -> None:
+    return None
+
+
+def record_runtime_proxy_attempt(request: Request, target_type: str, target_id: str, path: str) -> None:
+    return None
+
+
+async def _proxy_request(
+    runtime_ref: RuntimeRef,
+    request: Request,
+    path: str = "",
+    raw_path: str = "",
+    strip_sensitive_headers: bool = False,
+) -> Response:
     try:
         validated_path = validate_runtime_path(path)
         if raw_path:
@@ -173,15 +254,19 @@ async def _proxy_request(runtime_ref: RuntimeRef, request: Request, path: str = 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     upstream = build_runtime_upstream_url(runtime_ref, path=validated_path, query=request.url.query)
-    headers = {key: value for key, value in request.headers.items() if key.lower() not in HOP_BY_HOP_HEADERS}
+    stripped_headers = HOP_BY_HOP_HEADERS | (SENSITIVE_FORWARD_HEADERS if strip_sensitive_headers else set())
+    headers = {key: value for key, value in request.headers.items() if key.lower() not in stripped_headers}
     body = await request.body()
-    async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
-        upstream_response = await client.request(
-            request.method,
-            upstream,
-            headers=headers,
-            content=body if body else None,
-        )
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
+            upstream_response = await client.request(
+                request.method,
+                upstream,
+                headers=headers,
+                content=body if body else None,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="runtime proxy unavailable") from exc
 
     return Response(
         content=upstream_response.content,
@@ -215,3 +300,37 @@ async def proxy_application(
     runtime_ref = _get_runtime_ref_for_application(registry, application_id)
     raw_path = _extract_raw_proxy_path(request, f"/runtime-applications/{application_id}")
     return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)
+
+
+@internal_proxy_router.api_route(
+    "/{service_slug}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+)
+@internal_proxy_router.api_route(
+    "/{service_slug}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+)
+async def proxy_runtime_service(
+    service_slug: str,
+    request: Request,
+    path: str = "",
+    session: Session = Depends(get_db),
+) -> Response:
+    if not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
+        raise HTTPException(status_code=404, detail="service not found")
+    authorize_internal_service_proxy(request, service_slug)
+    registry = RegistryService(session)
+    unit = _find_service_by_slug(registry.get_units(kind="service"), service_slug)
+    if unit is None:
+        record_runtime_proxy_attempt(request, "service", service_slug, path)
+        raise HTTPException(status_code=404, detail="service not found")
+    runtime_ref = _get_runtime_ref_for_unit(registry, unit)
+    raw_path = _extract_raw_proxy_path(request, f"/internal/runtime-services/{service_slug}")
+    record_runtime_proxy_attempt(request, "service", service_slug, raw_path or path)
+    return await _proxy_request(
+        runtime_ref,
+        request,
+        path=path,
+        raw_path=raw_path,
+        strip_sensitive_headers=True,
+    )

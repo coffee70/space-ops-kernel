@@ -24,21 +24,19 @@ def test_successful_deployment_updates_registry(client) -> None:
         assert "target_url" not in deployment.runtime_ref
         assert "health_url" not in deployment.runtime_ref
         assert "base_url" not in deployment.runtime_ref
-        runtime_ref = deployment.runtime_ref
 
     registry = client.get("/registry/services")
     assert registry.status_code == 200
     services = registry.json()
-    service = next(item for item in services if item["unit_id"] == "derived-telemetry-service")
-    assert service["deployment_status"] == "healthy"
-    assert "runtime_ref" not in service["discovery_metadata_json"]
-    assert service["runtime_endpoint"] == {
-        "service_name": runtime_ref["service_name"],
-        "host": runtime_ref["transport"]["host"],
-        "port": 8080,
-        "proxy_base_path": "",
-        "health_path": "/health",
-    }
+    service = next(item for item in services if item["unitId"] == "derived-telemetry-service")
+    assert service["serviceSlug"] == "derived-telemetry-service"
+    assert service["deploymentStatus"] == "healthy"
+    assert service["healthStatus"] == "passing"
+    assert "runtime_endpoint" not in service
+    assert "runtimeEndpoint" not in service
+    assert "active_deployment_id" not in service
+    assert "source_path" not in service
+    assert "discovery_metadata_json" not in service
 
 
 def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
@@ -91,9 +89,9 @@ discovery:
 
     registry = client.get("/registry/services")
     assert registry.status_code == 200
-    service = next(item for item in registry.json() if item["unit_id"] == "derived-telemetry-service")
-    assert service["active_deployment_id"] == first_deployment_id
-    assert service["deployment_status"] == "healthy"
+    service = next(item for item in registry.json() if item["unitId"] == "derived-telemetry-service")
+    assert "active_deployment_id" not in service
+    assert service["deploymentStatus"] == "healthy"
 
 
 def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:

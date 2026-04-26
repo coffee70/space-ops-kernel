@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 APPLICATION_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LOADER_KEY_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+SERVICE_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SAFE_COLOR_PATTERN = re.compile(
     r"^(?:#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$"
 )
@@ -436,30 +437,85 @@ class TemplateSummary(BaseModel):
     description: str
 
 
-class RuntimeEndpointSummary(BaseModel):
-    """Runtime endpoint summary for registry responses."""
+class RegistryServiceResponse(BaseModel):
+    """Public service catalog response without runtime topology."""
 
-    service_name: str
-    host: str
-    port: int
-    proxy_base_path: str
-    health_path: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    service_slug: str = Field(alias="serviceSlug")
+    unit_id: str = Field(alias="unitId")
+    display_name: str = Field(alias="displayName")
+    package_owner: str = Field(alias="packageOwner")
+    runtime_kind: str = Field(alias="runtimeKind")
+    runtime_template: str = Field(alias="runtimeTemplate")
+    deployment_status: str = Field(alias="deploymentStatus")
+    health_status: str = Field(alias="healthStatus")
+    category: str | None = None
+    description: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+
+    @field_validator("service_slug")
+    @classmethod
+    def validate_service_slug(cls, value: str) -> str:
+        if len(value) > 64:
+            raise ValueError("service_slug exceeds maximum length")
+        if not SERVICE_SLUG_PATTERN.fullmatch(value):
+            raise ValueError("service_slug must be a lowercase slug")
+        return value
+
+    @field_validator("category", "description")
+    @classmethod
+    def validate_safe_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if len(trimmed) > 320:
+            raise ValueError("text field exceeds maximum length")
+        return trimmed
+
+    @field_validator("capabilities")
+    @classmethod
+    def validate_service_capabilities(cls, value: list[str]) -> list[str]:
+        return PlatformApplicationDefinition.validate_capabilities(value)
 
 
-class RegistryUnitResponse(BaseModel):
-    """Managed runtime response."""
+class RegistryUnitSummaryResponse(BaseModel):
+    """Public unit catalog response without runtime/deployment internals."""
 
-    unit_id: str
-    display_name: str
-    package_owner: str
-    runtime_kind: str
-    runtime_template: str
-    source_path: str
-    active_deployment_id: str | None = None
-    deployment_status: str
-    health_status: str
-    discovery_metadata_json: dict[str, Any]
-    runtime_endpoint: RuntimeEndpointSummary | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    unit_id: str = Field(alias="unitId")
+    display_name: str = Field(alias="displayName")
+    package_owner: str = Field(alias="packageOwner")
+    runtime_kind: str = Field(alias="runtimeKind")
+    runtime_template: str = Field(alias="runtimeTemplate")
+    deployment_status: str = Field(alias="deploymentStatus")
+    health_status: str = Field(alias="healthStatus")
+    service_slug: str | None = Field(default=None, alias="serviceSlug")
+    application_id: str | None = Field(default=None, alias="applicationId")
+    category: str | None = None
+    description: str | None = None
+
+    @field_validator("service_slug")
+    @classmethod
+    def validate_optional_service_slug(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return RegistryServiceResponse.validate_service_slug(value)
+
+    @field_validator("application_id")
+    @classmethod
+    def validate_optional_application_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_application_id(value)
+
+    @field_validator("category", "description")
+    @classmethod
+    def validate_safe_optional_text(cls, value: str | None) -> str | None:
+        return RegistryServiceResponse.validate_safe_optional_text(value)
 
 
 class DeploymentRecordResponse(BaseModel):
