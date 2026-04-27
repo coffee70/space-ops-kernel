@@ -1,7 +1,7 @@
-template_id: frontend-module
-display_name: Frontend Module
-description: Scaffold an independently deployable frontend module under space-ops-apps/modules.
-unit_kind: module
+template_id: frontend-shell
+display_name: Frontend Shell
+description: Reserved template for the platform shell foundation.
+runtime_kind: frontend_shell
 allowed_package_owners:
   - space-ops-apps
 default_build_command: node --check server.js
@@ -10,4 +10,3 @@ health:
   type: http
   path: /health
   port: 3100
-

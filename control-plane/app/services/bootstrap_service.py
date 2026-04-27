@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -40,7 +43,7 @@ BOOTSTRAP_UNITS = (
     "ops-events-service",
     "platform-api-gateway",
     "derived-telemetry-service",
-    "battery-efficiency-module",
+    "embedded-demo-application",
 )
 
 
@@ -58,6 +61,7 @@ class ManagedForkBootstrapper:
         if repo_missing:
             self._initialize_managed_repo()
         self._ensure_main_worktree()
+        self._sync_bootstrap_manifests()
 
     def _initialize_managed_repo(self) -> None:
         self.settings.bare_repo_dir.mkdir(parents=True, exist_ok=True)
@@ -110,9 +114,97 @@ class ManagedForkBootstrapper:
             dirs_exist_ok=True,
         )
 
-        seed_root = Path(__file__).resolve().parents[1] / "bootstrap" / "manifests"
+        seed_root = self._seed_manifests_root()
         for manifest_path in seed_root.glob("*.yaml"):
             shutil.copy2(manifest_path, manifests_root / manifest_path.name)
+
+    def _seed_manifests_root(self) -> Path:
+        return Path(__file__).resolve().parents[1] / "bootstrap" / "manifests"
+
+    def _sync_bootstrap_manifests(self) -> None:
+        worktree = self.settings.main_worktree_dir
+
+        previous_state = self._load_seed_state()
+        next_state = dict(previous_state)
+        updated = False
+        updated_paths: list[str] = []
+
+        for relative_path, seed_path in self._seeded_bootstrap_files():
+            target_path = worktree / relative_path
+            seed_content = seed_path.read_text(encoding="utf-8")
+            seed_hash = self._content_hash(seed_content)
+            previous_hash = previous_state.get(relative_path.as_posix())
+            current_hash = self._content_hash(target_path.read_text(encoding="utf-8")) if target_path.exists() else None
+
+            should_replace = False
+            if not target_path.exists():
+                should_replace = True
+            elif previous_hash is not None:
+                should_replace = current_hash == previous_hash
+
+            if should_replace:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                if not target_path.exists() or target_path.read_text(encoding="utf-8") != seed_content:
+                    target_path.write_text(seed_content, encoding="utf-8")
+                    updated = True
+                    updated_paths.append(relative_path.as_posix())
+                next_state[relative_path.as_posix()] = seed_hash
+            elif previous_hash is None and current_hash == seed_hash:
+                next_state[relative_path.as_posix()] = seed_hash
+
+        self._write_seed_state(next_state)
+        if updated:
+            self._commit_synced_manifests(updated_paths)
+
+    def _seeded_bootstrap_files(self) -> list[tuple[Path, Path]]:
+        seeded_files: list[tuple[Path, Path]] = []
+
+        for manifest_path in sorted(self._seed_manifests_root().glob("*.yaml")):
+            seeded_files.append((Path("manifests") / "units" / manifest_path.name, manifest_path))
+
+        embedded_demo_root = self.settings.resolved_apps_source_root / "applications" / "embedded-demo-application"
+        if embedded_demo_root.exists():
+            for source_path in sorted(path for path in embedded_demo_root.rglob("*") if path.is_file()):
+                relative_source_path = source_path.relative_to(self.settings.resolved_apps_source_root)
+                seeded_files.append((Path("project") / "space-ops-apps" / relative_source_path, source_path))
+
+        return seeded_files
+
+    def _commit_synced_manifests(self, updated_paths: list[str]) -> None:
+        if not updated_paths:
+            return
+        env = os.environ.copy()
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "Space Ops Control Plane",
+                "GIT_AUTHOR_EMAIL": "control-plane@space-ops.local",
+                "GIT_COMMITTER_NAME": "Space Ops Control Plane",
+                "GIT_COMMITTER_EMAIL": "control-plane@space-ops.local",
+            }
+        )
+        run_command(["git", "add", *updated_paths], cwd=self.settings.main_worktree_dir)
+        run_command(
+            ["git", "commit", "-m", "Sync bootstrap manifests from control plane", "--", *updated_paths],
+            cwd=self.settings.main_worktree_dir,
+            env=env,
+        )
+
+    def _load_seed_state(self) -> dict[str, str]:
+        path = self.settings.bootstrap_seed_state_path
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _write_seed_state(self, state: dict[str, str]) -> None:
+        self.settings.bootstrap_seed_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.settings.bootstrap_seed_state_path.write_text(
+            json.dumps(state, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _content_hash(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class RuntimeBootstrapper:
@@ -176,3 +268,17 @@ class RuntimeBootstrapper:
         except Exception:
             return False
         return response.status_code < 400
+
+
+class ApplicationRegistryBootstrapper:
+    """Seed built-in platform applications into the control-plane registry."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    def ensure_seeded(self) -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            registry = RegistryService(session)
+            registry.seed_builtin_applications(self.settings.resolved_apps_source_root)
+            session.commit()

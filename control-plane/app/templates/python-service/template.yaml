@@ -1,7 +1,7 @@
 template_id: python-service
 display_name: Python Service
 description: Scaffold a FastAPI backend unit sourced from space-ops-platform.
-unit_kind: service
+runtime_kind: service
 allowed_package_owners:
   - space-ops-platform
 default_build_command: pip install -r requirements.txt
@@ -11,4 +11,3 @@ health:
   path: /health
   port: 8080
 default_category: platform
-

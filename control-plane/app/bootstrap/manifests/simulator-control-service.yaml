@@ -1,7 +1,7 @@
 unit_id: simulator-control-service
 display_name: Simulator Control Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: python-service
 source_path: project/space-ops-platform
 build:

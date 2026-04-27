@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.actors import ActorContext, get_actor_context
 from app.config import get_settings
 from app.db import get_db
 from app.deployments.service import DeploymentService
@@ -105,11 +104,10 @@ def create_branch(
 @router.post("/commits", response_model=Envelope)
 def create_commit(
     request: CommitCreateRequest,
-    actor: ActorContext = Depends(get_actor_context),
     repository: ManagedGitRepository = Depends(get_repository),
 ) -> Envelope:
     try:
-        commit_sha, changed_files = repository.create_commit(request.branch, request.message, actor)
+        commit_sha, changed_files = repository.create_commit(request.branch, request.message)
         return Envelope(
             branch=request.branch,
             commit_sha=commit_sha,

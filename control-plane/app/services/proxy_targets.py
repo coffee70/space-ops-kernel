@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from ipaddress import ip_address
+from urllib.parse import unquote
 
 from app.config import Settings
-from app.schemas import RuntimeEndpointSummary, RuntimeRef
+from app.schemas import RuntimeRef
 
 LOCALHOST_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
@@ -27,7 +28,7 @@ def build_runtime_health_url(runtime_ref: RuntimeRef) -> str:
 def build_runtime_upstream_url(runtime_ref: RuntimeRef, path: str = "", query: str = "") -> str:
     """Build a proxy upstream URL from structured runtime metadata."""
 
-    joined_path = join_url_path(runtime_ref.proxy.base_path, path)
+    joined_path = join_url_path(runtime_ref.proxy.base_path, validate_runtime_path(path))
     query_suffix = f"?{query}" if query else ""
     return (
         f"{runtime_ref.transport.scheme}://"
@@ -43,6 +44,48 @@ def join_url_path(base_path: str, path: str = "") -> str:
     if not segments:
         return "/"
     return "/" + "/".join(segments)
+
+
+def validate_runtime_path(path: str) -> str:
+    """Reject unsafe proxy path fragments from browser input."""
+
+    if not path:
+        return ""
+
+    candidates = [path, *_decode_runtime_path_candidates(path)]
+    for candidate in candidates:
+        _validate_runtime_path_candidate(candidate)
+    return path
+
+
+def _decode_runtime_path_candidates(path: str, max_passes: int = 3) -> list[str]:
+    decoded_values: list[str] = []
+    candidate = path
+    for _ in range(max_passes):
+        decoded = unquote(candidate)
+        if decoded == candidate:
+            break
+        decoded_values.append(decoded)
+        candidate = decoded
+    return decoded_values
+
+
+def _validate_runtime_path_candidate(path: str) -> None:
+    lowered = path.lower()
+    if path.startswith("/") or path.startswith("\\"):
+        raise RuntimeProxyValidationError("proxy path must be relative")
+    if any(token in lowered for token in ("http://", "https://", "//", "\\\\")):
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if lowered.startswith("//") or lowered.startswith("\\\\"):
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if ".." in path:
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if "\\" in path or "%5c" in lowered:
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if "%2f" in lowered or "/" in path and "//" in path:
+        raise RuntimeProxyValidationError("proxy path is not allowed")
+    if any(segment == ".." for segment in path.split("/")):
+        raise RuntimeProxyValidationError("proxy path is not allowed")
 
 
 def validate_runtime_ref(settings: Settings, runtime_ref: RuntimeRef) -> None:
@@ -79,14 +122,3 @@ def validate_runtime_ref(settings: Settings, runtime_ref: RuntimeRef) -> None:
     if runtime_ref.proxy.base_path and not runtime_ref.proxy.base_path.startswith("/"):
         raise RuntimeProxyValidationError("runtime proxy base_path must be absolute")
 
-
-def runtime_endpoint_summary(runtime_ref: RuntimeRef) -> RuntimeEndpointSummary:
-    """Expose a safe summary of the active runtime endpoint."""
-
-    return RuntimeEndpointSummary(
-        service_name=runtime_ref.service_name,
-        host=runtime_ref.transport.host,
-        port=runtime_ref.transport.port,
-        proxy_base_path=runtime_ref.proxy.base_path,
-        health_path=runtime_ref.health.path,
-    )

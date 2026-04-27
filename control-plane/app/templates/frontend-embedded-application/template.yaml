@@ -1,0 +1,12 @@
+template_id: frontend-embedded-application
+display_name: Frontend Embedded Application
+description: Scaffold an independently deployable embedded application under space-ops-apps/applications.
+runtime_kind: frontend_application
+allowed_package_owners:
+  - space-ops-apps
+default_build_command: node --check server.js
+default_run_command: node server.js
+health:
+  type: http
+  path: /health
+  port: 3100

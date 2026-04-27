@@ -1,0 +1,16 @@
+{
+  "applicationId": "{{application_id}}",
+  "title": "{{display_name}}",
+  "description": "{{description}}",
+  "iconKey": "app-window",
+  "iconColor": "#38bdf8",
+  "iconBackground": "rgba(56, 189, 248, 0.16)",
+  "applicationType": "native",
+  "routePath": "/apps/{{application_id}}",
+  "loaderKey": "{{application_id}}",
+  "version": "0.1.0",
+  "enabled": true,
+  "sortOrder": 100,
+  "owner": "space-ops-apps",
+  "capabilities": []
+}

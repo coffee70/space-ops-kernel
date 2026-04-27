@@ -7,14 +7,13 @@ from typing import Any
 
 import yaml
 
-from app.actors import ActorContext
 from app.config import Settings
 from app.git.repository import ManagedGitRepository
 from app.schemas import ScaffoldRequest, UnitManifest
 
 
 class TemplateService:
-    """Load templates and scaffold units."""
+    """Load templates and scaffold managed runtimes."""
 
     def __init__(self, settings: Settings, repository: ManagedGitRepository):
         self.settings = settings
@@ -34,7 +33,7 @@ class TemplateService:
         with (template_dir / "template.yaml").open("r", encoding="utf-8") as handle:
             return yaml.safe_load(handle)
 
-    def scaffold(self, template_id: str, request: ScaffoldRequest, actor: ActorContext) -> dict[str, Any]:
+    def scaffold(self, template_id: str, request: ScaffoldRequest) -> dict[str, Any]:
         template = self.get_template(template_id)
         branch = request.branch
         worktree = self.repository.ensure_branch_worktree(branch)
@@ -52,15 +51,17 @@ class TemplateService:
         if package_owner not in allowed_owners:
             raise ValueError(f"package_owner must be one of {allowed_owners}")
 
+        route_slug = request.discovery.get("application_id") or request.discovery.get("route_slug") or request.unit_id
         replacements = {
             "unit_id": request.unit_id,
             "display_name": request.display_name,
             "package_owner": package_owner,
             "source_path": source_path.as_posix(),
-            "route_slug": request.discovery.get("route_slug") or request.unit_id,
+            "application_id": route_slug,
+            "route_slug": route_slug,
             "category": request.discovery.get("category") or template.get("default_category"),
             "api_base_path": request.discovery.get("api_base_path") or f"/api/{request.unit_id}",
-            "description": request.discovery.get("description") or f"{request.display_name} module",
+            "description": request.discovery.get("description") or f"{request.display_name} application",
             "default_build_command": template["default_build_command"],
             "default_run_command": template["default_run_command"],
             "health_path": template["health"]["path"],
@@ -85,13 +86,14 @@ class TemplateService:
             unit_id=request.unit_id,
             display_name=request.display_name,
             package_owner=package_owner,
-            unit_kind=template["unit_kind"],
+            runtime_kind=template["runtime_kind"],
             runtime_template=template_id,
             source_path=source_path.as_posix(),
             build={"command": template["default_build_command"]},
             run={"command": template["default_run_command"]},
             health=template["health"],
             discovery=self._default_discovery(template_id, replacements, request.discovery),
+            application=self._default_application(template_id, request.display_name, package_owner, replacements, request.discovery),
         )
         manifest_target = worktree / manifest_path
         manifest_target.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +105,6 @@ class TemplateService:
             "path": manifest_path.as_posix(),
             "commit_sha": self.repository.get_head_commit(branch),
             "changed_files": changed_files,
-            "actor": {"actor_id": actor.actor_id, "display_name": actor.display_name},
             "manifest": manifest.model_dump(),
         }
 
@@ -112,8 +113,10 @@ class TemplateService:
             return f"project/space-ops-platform/backend/services/{unit_id}"
         if template_id == "node-service":
             return f"project/space-ops-apps/services/{unit_id}"
-        if template_id == "frontend-module":
-            return f"project/space-ops-apps/modules/{unit_id}"
+        if template_id in {"frontend-native-application", "frontend-embedded-application"}:
+            return f"project/space-ops-apps/applications/{unit_id}"
+        if template_id == "frontend-shell":
+            return "project/space-ops-apps/mission-control-ui"
         raise ValueError(f"unsupported template {template_id}")
 
     @staticmethod
@@ -126,17 +129,58 @@ class TemplateService:
 
     @staticmethod
     def _default_discovery(template_id: str, replacements: dict[str, Any], discovery: dict[str, Any]) -> dict[str, Any]:
-        if template_id == "frontend-module":
-            return {
-                "route_slug": replacements["route_slug"],
-                "display_name": replacements["display_name"],
-                "description": discovery.get("description") or f"{replacements['display_name']} workspace module",
-                "icon_key": discovery.get("icon_key") or "app-window",
-                "open_path": f"/modules/{replacements['route_slug']}",
-            }
+        if template_id in {"frontend-native-application", "frontend-embedded-application", "frontend-shell"}:
+            return {}
         return {
             "category": replacements["category"],
             "api_base_path": replacements["api_base_path"],
             "capability_tags": discovery.get("capability_tags") or [],
             "health_endpoint": discovery.get("health_endpoint") or replacements.get("health_path", "/health"),
         }
+
+    @staticmethod
+    def _default_application(
+        template_id: str,
+        display_name: str,
+        package_owner: str,
+        replacements: dict[str, Any],
+        discovery: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if template_id == "frontend-native-application":
+            return {
+                "application_id": replacements["application_id"],
+                "title": display_name,
+                "description": discovery.get("description") or f"{display_name} native application",
+                "icon_key": discovery.get("icon_key") or "app-window",
+                "icon_color": discovery.get("icon_color") or "#38bdf8",
+                "icon_background": discovery.get("icon_background") or "rgba(56, 189, 248, 0.16)",
+                "application_type": "native",
+                "route_path": f"/apps/{replacements['application_id']}",
+                "loader_key": discovery.get("loader_key") or replacements["application_id"],
+                "version": discovery.get("version") or "0.1.0",
+                "enabled": True,
+                "sort_order": discovery.get("sort_order") or 100,
+                "owner": discovery.get("owner") or package_owner,
+                "capabilities": discovery.get("capabilities") or [],
+            }
+        if template_id == "frontend-embedded-application":
+            return {
+                "application_id": replacements["application_id"],
+                "title": display_name,
+                "description": discovery.get("description") or f"{display_name} embedded application",
+                "icon_key": discovery.get("icon_key") or "app-window",
+                "icon_color": discovery.get("icon_color") or "#f59e0b",
+                "icon_background": discovery.get("icon_background") or "rgba(245, 158, 11, 0.16)",
+                "application_type": "embedded",
+                "route_path": f"/apps/{replacements['application_id']}",
+                "embedded_url": discovery.get("embedded_url"),
+                "proxy_base_path": discovery.get("proxy_base_path") or f"/runtime-applications/{replacements['application_id']}",
+                "version": discovery.get("version") or "0.1.0",
+                "enabled": True,
+                "iframe_sandbox": discovery.get("iframe_sandbox") or "allow-scripts allow-same-origin allow-forms",
+                "iframe_allow": discovery.get("iframe_allow") or "",
+                "sort_order": discovery.get("sort_order") or 100,
+                "owner": discovery.get("owner") or package_owner,
+                "capabilities": discovery.get("capabilities") or [],
+            }
+        return None

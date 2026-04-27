@@ -42,7 +42,6 @@ def test_branch_write_commit_history_and_diff(client) -> None:
     commit_response = client.post(
         "/code/commits",
         json={"branch": "feature/runtime-registry", "message": "Add runtime registry note"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
     commit_sha = commit_response.json()["commit_sha"]
@@ -73,7 +72,6 @@ def test_code_read_request_does_not_reimport_seed_source(client, control_plane_e
     commit_response = client.post(
         "/code/commits",
         json={"branch": "main", "message": "User edit in managed fork"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
 

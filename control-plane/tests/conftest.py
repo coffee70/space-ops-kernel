@@ -94,12 +94,73 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health():\n    return {'status': 'ok'}\n",
     )
     _write(
-        apps_root / "modules/battery-efficiency-module/Dockerfile",
+        apps_root / "applications/embedded-demo-application/Dockerfile",
         "FROM node:20-alpine\nWORKDIR /app\nCOPY . /app\nCMD [\"node\", \"server.js\"]\n",
     )
     _write(
-        apps_root / "modules/battery-efficiency-module/server.js",
-        "require('http').createServer((req,res)=>{if(req.url==='/health'){res.end('{\"status\":\"ok\"}');return;}res.end('ok');}).listen(process.env.PORT||3100,'0.0.0.0');\n",
+        apps_root / "applications/embedded-demo-application/server.js",
+        "const basePath=(process.env.APPLICATION_PROXY_BASE_PATH||'/').replace(/\\/+$/,'')||'/';"
+        "require('http').createServer((req,res)=>{if(req.url==='/health'){res.end('{\"status\":\"ok\"}');return;}"
+        "const requestPath=req.url.split('?')[0];"
+        "if(basePath!=='/'&&requestPath!==basePath&&!requestPath.startsWith(`${basePath}/`)){res.statusCode=404;res.end('not found');return;}"
+        "res.end('ok');}).listen(process.env.PORT||3100,'0.0.0.0');\n",
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/overview/application.seed.json",
+        (
+            '{"applicationId":"overview","title":"Overview","description":"Mission overview dashboard.",'
+            '"iconKey":"layout-dashboard","iconColor":"#38bdf8","iconBackground":"rgba(56, 189, 248, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/overview","loaderKey":"overview","version":"0.1.0",'
+            '"enabled":true,"sortOrder":10,"owner":"space-ops-apps","capabilities":["telemetry-overview"]}'
+        ),
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/telemetry/application.seed.json",
+        (
+            '{"applicationId":"telemetry","title":"Telemetry","description":"Telemetry inventory and detail views.",'
+            '"iconKey":"chart-no-axes-combined","iconColor":"#34d399","iconBackground":"rgba(52, 211, 153, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/telemetry","loaderKey":"telemetry","version":"0.1.0",'
+            '"enabled":true,"sortOrder":20,"owner":"space-ops-apps","capabilities":["telemetry-analysis"]}'
+        ),
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/planning/application.seed.json",
+        (
+            '{"applicationId":"planning","title":"Planning","description":"Mission planning and orbit views.",'
+            '"iconKey":"satellite-dish","iconColor":"#f59e0b","iconBackground":"rgba(245, 158, 11, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/planning","loaderKey":"planning","version":"0.1.0",'
+            '"enabled":true,"sortOrder":30,"owner":"space-ops-apps","capabilities":["mission-planning"]}'
+        ),
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/sources/application.seed.json",
+        (
+            '{"applicationId":"sources","title":"Sources","description":"Source registry and configuration tools.",'
+            '"iconKey":"server","iconColor":"#fb7185","iconBackground":"rgba(251, 113, 133, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/sources","loaderKey":"sources","version":"0.1.0",'
+            '"enabled":true,"sortOrder":40,"owner":"space-ops-apps","capabilities":["source-management"]}'
+        ),
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/workspace/application.seed.json",
+        (
+            '{"applicationId":"workspace","title":"Workspace","description":"Open VS Code Server workspace for platform files and tools.",'
+            '"iconKey":"folder-code","iconColor":"#38bdf8","iconBackground":"rgba(56, 189, 248, 0.16)",'
+            '"applicationType":"embedded","routePath":"/apps/workspace","embeddedUrl":"/_embedded/workspace",'
+            '"version":"0.1.0","enabled":true,"iframeSandbox":"allow-scripts allow-same-origin allow-forms","iframeAllow":"",'
+            '"sortOrder":50,"owner":"space-ops-apps","capabilities":["development-workspace"]}'
+        ),
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/battery-efficiency/application.seed.json",
+        (
+            '{"applicationId":"battery-efficiency","title":"Battery Efficiency",'
+            '"description":"Example native analysis app built inside the platform shell over Layer 2 telemetry.",'
+            '"iconKey":"battery","iconColor":"#f59e0b","iconBackground":"rgba(245, 158, 11, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/battery-efficiency","loaderKey":"battery-efficiency",'
+            '"version":"0.1.0","enabled":true,"sortOrder":60,"owner":"space-ops-apps",'
+            '"capabilities":["telemetry-analysis","battery-analysis"]}'
+        ),
     )
 
     monkeypatch.setenv("WORKSPACE_ROOT", str(workspace_root))

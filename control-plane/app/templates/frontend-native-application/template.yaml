@@ -1,0 +1,12 @@
+template_id: frontend-native-application
+display_name: Frontend Native Application
+description: Scaffold a native platform application entry under the Mission Control UI application source tree.
+runtime_kind: frontend_application
+allowed_package_owners:
+  - space-ops-apps
+default_build_command: node --check server.js
+default_run_command: node server.js
+health:
+  type: http
+  path: /health
+  port: 3100

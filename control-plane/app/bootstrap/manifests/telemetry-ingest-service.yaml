@@ -1,7 +1,7 @@
 unit_id: telemetry-ingest-service
 display_name: Telemetry Ingest Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: python-service
 source_path: project/space-ops-platform
 build:

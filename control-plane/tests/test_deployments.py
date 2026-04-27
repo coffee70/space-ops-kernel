@@ -24,21 +24,19 @@ def test_successful_deployment_updates_registry(client) -> None:
         assert "target_url" not in deployment.runtime_ref
         assert "health_url" not in deployment.runtime_ref
         assert "base_url" not in deployment.runtime_ref
-        runtime_ref = deployment.runtime_ref
 
     registry = client.get("/registry/services")
     assert registry.status_code == 200
     services = registry.json()
-    service = next(item for item in services if item["unit_id"] == "derived-telemetry-service")
-    assert service["deployment_status"] == "healthy"
-    assert "runtime_ref" not in service["discovery_metadata_json"]
-    assert service["runtime_endpoint"] == {
-        "service_name": runtime_ref["service_name"],
-        "host": runtime_ref["transport"]["host"],
-        "port": 8080,
-        "proxy_base_path": "",
-        "health_path": "/health",
-    }
+    service = next(item for item in services if item["unitId"] == "derived-telemetry-service")
+    assert service["serviceSlug"] == "derived-telemetry-service"
+    assert service["deploymentStatus"] == "healthy"
+    assert service["healthStatus"] == "passing"
+    assert "runtime_endpoint" not in service
+    assert "runtimeEndpoint" not in service
+    assert "active_deployment_id" not in service
+    assert "source_path" not in service
+    assert "discovery_metadata_json" not in service
 
 
 def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
@@ -53,7 +51,7 @@ def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
 unit_id: derived-telemetry-service
 display_name: Derived Telemetry Service
 package_owner: space-ops-platform
-unit_kind: service
+runtime_kind: service
 runtime_template: invalid-template
 source_path: project/space-ops-platform/backend/services/derived-telemetry-service
 build:
@@ -80,7 +78,6 @@ discovery:
     commit_response = client.post(
         "/code/commits",
         json={"branch": "feature/bad-manifest", "message": "Break manifest"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
 
@@ -91,9 +88,9 @@ discovery:
 
     registry = client.get("/registry/services")
     assert registry.status_code == 200
-    service = next(item for item in registry.json() if item["unit_id"] == "derived-telemetry-service")
-    assert service["active_deployment_id"] == first_deployment_id
-    assert service["deployment_status"] == "healthy"
+    service = next(item for item in registry.json() if item["unitId"] == "derived-telemetry-service")
+    assert "active_deployment_id" not in service
+    assert service["deploymentStatus"] == "healthy"
 
 
 def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:
@@ -127,31 +124,29 @@ def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:
     assert second.json()["deployment_id"] != first_deployment_id
 
 
-def test_module_deployment_stores_structured_proxy_base_path(client) -> None:
+def test_frontend_application_deployment_stores_structured_proxy_base_path(client) -> None:
     from app.db import get_session_factory
-    from app.models.runtime import Deployment, ManagedUnit
+    from app.models.runtime import Application, Deployment, ManagedUnit
 
-    response = client.post("/deployments", json={"unit_id": "battery-efficiency-module", "branch": "main"})
+    response = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
     assert response.status_code == 200
     deployment_id = response.json()["deployment_id"]
 
     with get_session_factory()() as session:
         deployment = session.get(Deployment, deployment_id)
-        unit = session.get(ManagedUnit, "battery-efficiency-module")
+        unit = session.get(ManagedUnit, "embedded-demo-application")
+        application = session.get(Application, "embedded-demo")
         assert deployment is not None
         assert unit is not None
+        assert application is not None
         assert deployment.runtime_ref is not None
         assert deployment.runtime_ref["service_name"] == deployment.runtime_ref["transport"]["host"]
         assert deployment.runtime_ref["transport"]["port"] == 3100
-        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-modules/battery-efficiency"
+        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-applications/embedded-demo"
         assert "target_url" not in deployment.runtime_ref
-        assert unit.discovery_metadata_json == {
-            "route_slug": "battery-efficiency",
-            "display_name": "Battery Efficiency",
-            "description": "Live battery efficiency workspace module.",
-            "icon_key": "battery",
-            "open_path": "/modules/battery-efficiency",
-        }
+        assert unit.discovery_metadata_json == {}
+        assert application.route_path == "/apps/embedded-demo"
+        assert application.proxy_base_path == "/runtime-applications/embedded-demo"
 
 
 def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> None:
@@ -160,30 +155,47 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
 
     source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
-    unit_root = source_root / "project" / "space-ops-apps" / "modules" / "battery-efficiency-module"
+    unit_root = source_root / "project" / "space-ops-apps" / "applications" / "embedded-demo-application"
     unit_root.mkdir(parents=True, exist_ok=True)
 
     service = DeploymentService(get_settings(), object(), object())
     payload = service._build_compose_payload(
         manifest=UnitManifest(
-            unit_id="battery-efficiency-module",
-            display_name="Battery Efficiency",
+            unit_id="embedded-demo-application",
+            display_name="Embedded Demo",
             package_owner="space-ops-apps",
-            unit_kind="module",
-            runtime_template="frontend-module",
-            source_path="project/space-ops-apps/modules/battery-efficiency-module",
+            runtime_kind="frontend_application",
+            runtime_template="frontend-embedded-application",
+            source_path="project/space-ops-apps/applications/embedded-demo-application",
             build=BuildSpec(command="node --check server.js"),
             run=RunSpec(command="node server.js"),
             health=HealthSpec(type="http", path="/health", port=3100),
-            discovery={"route_slug": "battery-efficiency"},
+            discovery={},
+            application={
+                "application_id": "embedded-demo",
+                "title": "Embedded Demo",
+                "description": "Generic embedded runtime used to verify proxy-backed shell behavior.",
+                "icon_key": "monitor-smartphone",
+                "icon_color": "#38bdf8",
+                "icon_background": "rgba(56, 189, 248, 0.16)",
+                "application_type": "embedded",
+                "route_path": "/apps/embedded-demo",
+                "proxy_base_path": "/runtime-applications/embedded-demo",
+                "version": "0.1.0",
+                "enabled": True,
+                "iframe_sandbox": "allow-scripts allow-same-origin allow-forms",
+                "iframe_allow": "",
+                "sort_order": 999,
+                "capabilities": ["embedded-runtime-demo"],
+            },
         ),
         source_root=source_root,
-        service_name="battery-efficiency-module-preview",
+        service_name="embedded-demo-application-preview",
         env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
     )
     service = next(iter(payload["services"].values()))
 
-    assert service["build"]["context"].endswith("/project/space-ops-apps/modules/battery-efficiency-module")
+    assert service["build"]["context"].endswith("/project/space-ops-apps/applications/embedded-demo-application")
     assert service["build"]["dockerfile"] == "Dockerfile"
 
 
@@ -207,7 +219,7 @@ def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
             unit_id="derived-telemetry-service",
             display_name="Derived Telemetry Service",
             package_owner="space-ops-platform",
-            unit_kind="service",
+            runtime_kind="service",
             runtime_template="python-service",
             source_path="project/space-ops-platform/backend/services/derived-telemetry-service",
             build=BuildSpec(command="pip install -r requirements.txt"),
@@ -251,7 +263,6 @@ def test_deployment_request_does_not_reimport_seed_source(client, control_plane_
     commit_response = client.post(
         "/code/commits",
         json={"branch": "main", "message": "Update deployable service"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
     commit_sha = commit_response.json()["commit_sha"]
