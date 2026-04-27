@@ -1,7 +1,45 @@
 from __future__ import annotations
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from app.db import get_session_factory
-from app.models.runtime import ApplicationAuditEvent
+from app.models.runtime import Application, ApplicationAuditEvent
+
+
+def _application_row(application_id: str, **overrides) -> Application:
+    values = {
+        "application_id": application_id,
+        "title": f"Test {application_id}",
+        "description": "Test application registry row.",
+        "icon_key": "test",
+        "icon_color": "#ffffff",
+        "icon_background": "rgba(255,255,255,0.16)",
+        "application_type": "native",
+        "route_path": f"/apps/{application_id}",
+        "loader_key": application_id,
+        "embedded_url": None,
+        "proxy_base_path": None,
+        "version": "0.1.0",
+        "enabled": True,
+        "sort_order": 100,
+        "owner": "tests",
+        "health_status": "unknown",
+        "deployment_status": "seeded",
+    }
+    values.update(overrides)
+    return Application(**values)
+
+
+def _commit_application(application: Application) -> None:
+    with get_session_factory()() as session:
+        session.add(application)
+        session.commit()
+
+
+def _assert_application_row_fails(application: Application) -> None:
+    with pytest.raises(IntegrityError):
+        _commit_application(application)
 
 
 def test_registry_application_enable_route_is_exposed(client) -> None:
@@ -65,6 +103,66 @@ def test_get_registry_applications_returns_seeded_catalog_in_order(client) -> No
     assert workspace["embeddedUrl"] == "/_embedded/workspace"
     assert workspace["enabled"] is True
     assert workspace["sortOrder"] == 50
+
+
+def test_application_registry_db_rejects_invalid_transport_contracts(client) -> None:
+    invalid_rows = [
+        _application_row("db-native-no-loader", loader_key=None),
+        _application_row("db-native-embedded-url", embedded_url="/_embedded/native"),
+        _application_row(
+            "db-embedded-loader",
+            application_type="embedded",
+            loader_key="db-embedded-loader",
+            embedded_url="/_embedded/loader",
+        ),
+        _application_row(
+            "db-embedded-no-transport",
+            application_type="embedded",
+            loader_key=None,
+        ),
+    ]
+
+    for application in invalid_rows:
+        _assert_application_row_fails(application)
+
+
+def test_application_registry_db_rejects_route_path_mismatch(client) -> None:
+    _assert_application_row_fails(
+        _application_row("db-route-mismatch", route_path="/apps/other-application"),
+    )
+
+
+def test_application_registry_db_rejects_invalid_proxy_base_path(client) -> None:
+    _assert_application_row_fails(
+        _application_row(
+            "db-bad-proxy",
+            application_type="embedded",
+            loader_key=None,
+            proxy_base_path="/not-runtime/foo",
+        ),
+    )
+
+
+def test_application_registry_db_accepts_workspace_style_embedded_transport(client) -> None:
+    _commit_application(
+        _application_row(
+            "db-workspace",
+            application_type="embedded",
+            loader_key=None,
+            embedded_url="/_embedded/workspace",
+        ),
+    )
+
+
+def test_application_registry_db_accepts_proxy_backed_embedded_transport(client) -> None:
+    _commit_application(
+        _application_row(
+            "db-proxy-demo",
+            application_type="embedded",
+            loader_key=None,
+            proxy_base_path="/runtime-applications/db-proxy-demo",
+        ),
+    )
 
 
 def test_enable_endpoint_sets_enabled_true_and_returns_updated_payload(client) -> None:

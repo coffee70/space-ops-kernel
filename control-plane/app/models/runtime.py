@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -88,6 +88,33 @@ class Application(Base):
     """Database-backed platform application registry entry."""
 
     __tablename__ = "applications"
+    __table_args__ = (
+        CheckConstraint(
+            "application_type IN ('native', 'embedded')",
+            name="ck_applications_application_type",
+        ),
+        CheckConstraint(
+            "char_length(application_id) > 0",
+            name="ck_applications_application_id_nonempty",
+        ),
+        CheckConstraint(
+            "route_path LIKE '/apps/%'",
+            name="ck_applications_route_path_prefix",
+        ),
+        CheckConstraint(
+            "((application_type = 'native' AND loader_key IS NOT NULL AND embedded_url IS NULL AND proxy_base_path IS NULL) "
+            "OR (application_type = 'embedded' AND loader_key IS NULL AND (embedded_url IS NOT NULL OR proxy_base_path IS NOT NULL)))",
+            name="ck_applications_transport_contract",
+        ),
+        CheckConstraint(
+            "route_path = '/apps/' || application_id",
+            name="ck_applications_route_path_matches_application_id",
+        ),
+        CheckConstraint(
+            "proxy_base_path IS NULL OR proxy_base_path LIKE '/runtime-applications/%'",
+            name="ck_applications_proxy_base_path_prefix",
+        ),
+    )
 
     application_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(String(120), nullable=False)

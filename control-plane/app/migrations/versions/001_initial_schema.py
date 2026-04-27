@@ -112,6 +112,19 @@ def upgrade() -> None:
             "route_path LIKE '/apps/%'",
             name="ck_applications_route_path_prefix",
         ),
+        sa.CheckConstraint(
+            "((application_type = 'native' AND loader_key IS NOT NULL AND embedded_url IS NULL AND proxy_base_path IS NULL) "
+            "OR (application_type = 'embedded' AND loader_key IS NULL AND (embedded_url IS NOT NULL OR proxy_base_path IS NOT NULL)))",
+            name="ck_applications_transport_contract",
+        ),
+        sa.CheckConstraint(
+            "route_path = '/apps/' || application_id",
+            name="ck_applications_route_path_matches_application_id",
+        ),
+        sa.CheckConstraint(
+            "proxy_base_path IS NULL OR proxy_base_path LIKE '/runtime-applications/%'",
+            name="ck_applications_proxy_base_path_prefix",
+        ),
     )
     op.create_index("ux_applications_route_path", "applications", ["route_path"], unique=True)
     op.create_index("ux_applications_proxy_base_path", "applications", ["proxy_base_path"], unique=True)
