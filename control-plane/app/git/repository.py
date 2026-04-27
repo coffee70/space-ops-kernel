@@ -7,7 +7,6 @@ import os
 import tarfile
 from pathlib import Path, PurePosixPath
 
-from app.actors import ActorContext
 from app.config import Settings
 from app.services.shell import run_command
 
@@ -99,7 +98,7 @@ class ManagedGitRepository:
         worktree = self.ensure_branch_worktree(branch)
         return run_command(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
 
-    def create_commit(self, branch: str, message: str, actor: ActorContext) -> tuple[str, list[str]]:
+    def create_commit(self, branch: str, message: str) -> tuple[str, list[str]]:
         worktree = self.ensure_branch_worktree(branch)
         changed_files = self.get_changed_files(branch)
         if not changed_files:
@@ -107,10 +106,10 @@ class ManagedGitRepository:
         env = os.environ.copy()
         env.update(
             {
-                "GIT_AUTHOR_NAME": actor.display_name,
-                "GIT_AUTHOR_EMAIL": f"{actor.actor_id}@space-ops.local",
-                "GIT_COMMITTER_NAME": actor.display_name,
-                "GIT_COMMITTER_EMAIL": f"{actor.actor_id}@space-ops.local",
+                "GIT_AUTHOR_NAME": "Space Ops Control Plane",
+                "GIT_AUTHOR_EMAIL": "control-plane@space-ops.local",
+                "GIT_COMMITTER_NAME": "Space Ops Control Plane",
+                "GIT_COMMITTER_EMAIL": "control-plane@space-ops.local",
             }
         )
         run_command(["git", "add", "."], cwd=worktree)

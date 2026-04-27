@@ -270,6 +270,12 @@ class RegistryService:
     def get_application(self, application_id: str) -> Application | None:
         return self.session.get(Application, application_id)
 
+    def enable_application(self, application_id: str) -> PlatformApplicationDefinition | None:
+        return self._set_application_enabled_state(application_id, enabled=True)
+
+    def disable_application(self, application_id: str) -> PlatformApplicationDefinition | None:
+        return self._set_application_enabled_state(application_id, enabled=False)
+
     def get_application_capabilities(self, application_id: str) -> list[str]:
         rows = (
             self.session.query(ApplicationCapability)
@@ -304,6 +310,30 @@ class RegistryService:
                 "deploymentStatus": application.deployment_status,
             }
         )
+
+    def _set_application_enabled_state(
+        self,
+        application_id: str,
+        *,
+        enabled: bool,
+    ) -> PlatformApplicationDefinition | None:
+        application = self.get_application(application_id)
+        if application is None:
+            return None
+        previous_enabled = application.enabled
+        application.enabled = enabled
+        application.updated_at = utcnow()
+        self.session.flush()
+        self.record_application_audit(
+            application_id,
+            "enabled" if enabled else "disabled",
+            "Application enabled via registry API" if enabled else "Application disabled via registry API",
+            details={
+                "previous_enabled": previous_enabled,
+                "current_enabled": application.enabled,
+            },
+        )
+        return self.serialize_application(application)
 
     def upsert_application(
         self,

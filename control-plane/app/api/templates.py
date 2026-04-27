@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.actors import ActorContext, get_actor_context
 from app.config import get_settings
 from app.git.repository import ManagedGitRepository
 from app.schemas import Envelope, ScaffoldRequest, TemplateSummary
@@ -35,17 +34,16 @@ def get_template(template_id: str, service: TemplateService = Depends(get_templa
 def scaffold(
     template_id: str,
     request: ScaffoldRequest,
-    actor: ActorContext = Depends(get_actor_context),
     service: TemplateService = Depends(get_template_service),
 ) -> Envelope:
     try:
-        result = service.scaffold(template_id, request, actor)
+        result = service.scaffold(template_id, request)
         return Envelope(
             branch=result["branch"],
             commit_sha=result["commit_sha"],
             path=result["path"],
             changed_files=result["changed_files"],
-            data={"manifest": result["manifest"], "actor": result["actor"]},
+            data={"manifest": result["manifest"]},
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

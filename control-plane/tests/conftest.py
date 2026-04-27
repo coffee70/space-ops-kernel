@@ -146,7 +146,7 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         (
             '{"applicationId":"workspace","title":"Workspace","description":"Open VS Code Server workspace for platform files and tools.",'
             '"iconKey":"folder-code","iconColor":"#38bdf8","iconBackground":"rgba(56, 189, 248, 0.16)",'
-            '"applicationType":"embedded","routePath":"/apps/workspace","embeddedUrl":"/workspace","proxyBasePath":"/workspace",'
+            '"applicationType":"embedded","routePath":"/apps/workspace","embeddedUrl":"/_embedded/workspace",'
             '"version":"0.1.0","enabled":true,"iframeSandbox":"allow-scripts allow-same-origin allow-forms","iframeAllow":"",'
             '"sortOrder":50,"owner":"space-ops-apps","capabilities":["development-workspace"]}'
         ),

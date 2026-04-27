@@ -111,14 +111,6 @@ class Envelope(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-class ActorEnvelope(BaseModel):
-    """Actor metadata."""
-
-    actor_id: str
-    display_name: str
-    anonymous: bool
-
-
 class FileWriteRequest(BaseModel):
     """Write request."""
 

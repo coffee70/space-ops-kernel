@@ -152,6 +152,35 @@ def get_application(application_id: str, session: Session = Depends(get_db)) -> 
     return registry.serialize_application(application)
 
 
+def _toggle_application_enabled_state(
+    application_id: str,
+    *,
+    enabled: bool,
+    session: Session,
+) -> PlatformApplicationDefinition:
+    if not APPLICATION_ID_PATTERN.fullmatch(application_id):
+        raise HTTPException(status_code=404, detail="application not found")
+    registry = RegistryService(session)
+    definition = (
+        registry.enable_application(application_id)
+        if enabled
+        else registry.disable_application(application_id)
+    )
+    if definition is None:
+        raise HTTPException(status_code=404, detail="application not found")
+    return definition
+
+
+@router.post("/applications/{application_id}/enable", response_model=PlatformApplicationDefinition)
+def enable_application(application_id: str, session: Session = Depends(get_db)) -> PlatformApplicationDefinition:
+    return _toggle_application_enabled_state(application_id, enabled=True, session=session)
+
+
+@router.post("/applications/{application_id}/disable", response_model=PlatformApplicationDefinition)
+def disable_application(application_id: str, session: Session = Depends(get_db)) -> PlatformApplicationDefinition:
+    return _toggle_application_enabled_state(application_id, enabled=False, session=session)
+
+
 @router.get("/units", response_model=list[RegistryUnitSummaryResponse])
 def get_units(session: Session = Depends(get_db)) -> list[RegistryUnitSummaryResponse]:
     registry = RegistryService(session)
@@ -229,14 +258,6 @@ def _extract_raw_proxy_path(request: Request, route_prefix: str) -> str:
     if decoded_raw_path.startswith(f"{route_prefix}/"):
         return decoded_raw_path[len(route_prefix) + 1 :]
     return ""
-
-
-def authorize_internal_service_proxy(request: Request, service_slug: str) -> None:
-    return None
-
-
-def record_runtime_proxy_attempt(request: Request, target_type: str, target_id: str, path: str) -> None:
-    return None
 
 
 async def _proxy_request(
@@ -318,15 +339,12 @@ async def proxy_runtime_service(
 ) -> Response:
     if not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
         raise HTTPException(status_code=404, detail="service not found")
-    authorize_internal_service_proxy(request, service_slug)
     registry = RegistryService(session)
     unit = _find_service_by_slug(registry.get_units(kind="service"), service_slug)
     if unit is None:
-        record_runtime_proxy_attempt(request, "service", service_slug, path)
         raise HTTPException(status_code=404, detail="service not found")
     runtime_ref = _get_runtime_ref_for_unit(registry, unit)
     raw_path = _extract_raw_proxy_path(request, f"/internal/runtime-services/{service_slug}")
-    record_runtime_proxy_attempt(request, "service", service_slug, raw_path or path)
     return await _proxy_request(
         runtime_ref,
         request,

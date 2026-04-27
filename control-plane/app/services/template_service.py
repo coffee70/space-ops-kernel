@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-from app.actors import ActorContext
 from app.config import Settings
 from app.git.repository import ManagedGitRepository
 from app.schemas import ScaffoldRequest, UnitManifest
@@ -34,7 +33,7 @@ class TemplateService:
         with (template_dir / "template.yaml").open("r", encoding="utf-8") as handle:
             return yaml.safe_load(handle)
 
-    def scaffold(self, template_id: str, request: ScaffoldRequest, actor: ActorContext) -> dict[str, Any]:
+    def scaffold(self, template_id: str, request: ScaffoldRequest) -> dict[str, Any]:
         template = self.get_template(template_id)
         branch = request.branch
         worktree = self.repository.ensure_branch_worktree(branch)
@@ -106,7 +105,6 @@ class TemplateService:
             "path": manifest_path.as_posix(),
             "commit_sha": self.repository.get_head_commit(branch),
             "changed_files": changed_files,
-            "actor": {"actor_id": actor.actor_id, "display_name": actor.display_name},
             "manifest": manifest.model_dump(),
         }
 

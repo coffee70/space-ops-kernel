@@ -78,7 +78,6 @@ discovery:
     commit_response = client.post(
         "/code/commits",
         json={"branch": "feature/bad-manifest", "message": "Break manifest"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
 
@@ -264,7 +263,6 @@ def test_deployment_request_does_not_reimport_seed_source(client, control_plane_
     commit_response = client.post(
         "/code/commits",
         json={"branch": "main", "message": "Update deployable service"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
     commit_sha = commit_response.json()["commit_sha"]

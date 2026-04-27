@@ -11,7 +11,6 @@ from pathlib import Path
 
 import httpx
 
-from app.actors import ActorContext
 from app.config import Settings
 from app.db import get_session_factory
 from app.deployments.service import DeploymentService
@@ -174,14 +173,13 @@ class ManagedForkBootstrapper:
     def _commit_synced_manifests(self, updated_paths: list[str]) -> None:
         if not updated_paths:
             return
-        actor = ActorContext(actor_id="control-plane", display_name="Space Ops Control Plane", anonymous=False)
         env = os.environ.copy()
         env.update(
             {
-                "GIT_AUTHOR_NAME": actor.display_name,
-                "GIT_AUTHOR_EMAIL": f"{actor.actor_id}@space-ops.local",
-                "GIT_COMMITTER_NAME": actor.display_name,
-                "GIT_COMMITTER_EMAIL": f"{actor.actor_id}@space-ops.local",
+                "GIT_AUTHOR_NAME": "Space Ops Control Plane",
+                "GIT_AUTHOR_EMAIL": "control-plane@space-ops.local",
+                "GIT_COMMITTER_NAME": "Space Ops Control Plane",
+                "GIT_COMMITTER_EMAIL": "control-plane@space-ops.local",
             }
         )
         run_command(["git", "add", *updated_paths], cwd=self.settings.main_worktree_dir)

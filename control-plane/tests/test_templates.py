@@ -29,7 +29,6 @@ def test_template_catalog_and_scaffold(client) -> None:
                 "description": "Thermal balance panel",
             },
         },
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert scaffold_response.status_code == 200
     payload = scaffold_response.json()
@@ -73,7 +72,6 @@ def test_template_request_does_not_reimport_seed_source(client, control_plane_en
     commit_response = client.post(
         "/code/commits",
         json={"branch": "main", "message": "Edit apps managed fork"},
-        headers={"X-Actor-Id": "operator", "X-Actor-Name": "Operator"},
     )
     assert commit_response.status_code == 200
 
