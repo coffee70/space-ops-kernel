@@ -66,6 +66,8 @@ def _safe_discovery_text(discovery: dict, field: str) -> str | None:
 def _safe_discovery_capabilities(discovery: dict) -> list[str]:
     capabilities = discovery.get("capabilities")
     if not isinstance(capabilities, list):
+        capabilities = discovery.get("capability_tags")
+    if not isinstance(capabilities, list):
         return []
     safe: list[str] = []
     seen: set[str] = set()

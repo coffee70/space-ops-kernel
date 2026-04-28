@@ -50,3 +50,11 @@ def test_registry_service_response_does_not_expose_runtime_internals(client) -> 
     payload = response.json()
     assert FORBIDDEN_PUBLIC_FIELDS.isdisjoint(payload)
 
+
+def test_registry_services_normalizes_capability_tags_to_capabilities(client) -> None:
+    response = client.get("/registry/services/telemetry-ingest-service")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "capabilities" in payload
+    assert "ingest" in payload["capabilities"]
+

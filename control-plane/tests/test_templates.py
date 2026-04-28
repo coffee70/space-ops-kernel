@@ -56,6 +56,28 @@ def test_duplicate_unit_id_rejected(client) -> None:
     assert "already exists" in response.json()["detail"]
 
 
+def test_scaffolded_service_manifest_includes_service_slug(client) -> None:
+    response = client.post(
+        "/templates/python-service/scaffold",
+        json={
+            "branch": "main",
+            "unit_id": "ai-safety-service",
+            "display_name": "AI Safety Service",
+            "package_owner": "space-ops-platform",
+        },
+    )
+    assert response.status_code == 200
+
+    file_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": "manifests/units/ai-safety-service.yaml"},
+    )
+    assert file_response.status_code == 200
+    manifest = yaml.safe_load(file_response.json()["data"]["content"])
+    assert manifest["discovery"]["service_slug"] == "ai-safety-service"
+    assert manifest["discovery"]["capabilities"] == []
+
+
 def test_template_request_does_not_reimport_seed_source(client, control_plane_env) -> None:
     file_path = "project/space-ops-apps/README.md"
 

@@ -132,9 +132,11 @@ class TemplateService:
         if template_id in {"frontend-native-application", "frontend-embedded-application", "frontend-shell"}:
             return {}
         return {
+            "service_slug": discovery.get("service_slug") or replacements["unit_id"],
             "category": replacements["category"],
             "api_base_path": replacements["api_base_path"],
             "capability_tags": discovery.get("capability_tags") or [],
+            "capabilities": discovery.get("capabilities") or discovery.get("capability_tags") or [],
             "health_endpoint": discovery.get("health_endpoint") or replacements.get("health_path", "/health"),
         }
 

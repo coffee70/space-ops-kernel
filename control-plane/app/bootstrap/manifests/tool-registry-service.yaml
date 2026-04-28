@@ -1,0 +1,23 @@
+unit_id: tool-registry-service
+display_name: Tool Registry Service
+package_owner: space-ops-platform
+runtime_kind: service
+runtime_template: python-service
+source_path: project/space-ops-platform
+build:
+  command: pip install -r requirements.txt
+run:
+  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/tool-registry-service --host 0.0.0.0 --port 8080"
+health:
+  type: http
+  path: /health
+  port: 8080
+discovery:
+  service_slug: tool-registry-service
+  category: intelligence
+  api_base_path: /intelligence/tools
+  capability_tags:
+    - tool-registry
+    - metadata
+  health_endpoint: /health
+  visibility: internal
