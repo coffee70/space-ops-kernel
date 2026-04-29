@@ -199,6 +199,40 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     assert service["build"]["dockerfile"] == "Dockerfile"
 
 
+def test_platform_node_service_deployment_uses_nested_source_root(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    unit_root = source_root / "project" / "space-ops-platform" / "backend" / "services" / "agent-runtime-service"
+    unit_root.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(get_settings(), object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="agent-runtime-service",
+            display_name="Agent Runtime Service",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="node-service",
+            source_path="project/space-ops-platform/backend/services/agent-runtime-service",
+            build=BuildSpec(command="npm install && npm run build"),
+            run=RunSpec(command="node dist/server.js"),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "agent-runtime-service"},
+        ),
+        source_root=source_root,
+        service_name="agent-runtime-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    service = next(iter(payload["services"].values()))
+
+    assert service["build"]["context"].endswith("/project/space-ops-platform/backend/services/agent-runtime-service")
+    assert service["build"]["dockerfile"] == "Dockerfile"
+    assert service["command"] == "node dist/server.js"
+
+
 def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
     from app.config import get_settings
     from app.deployments.service import DeploymentService

@@ -1,8 +1,9 @@
 template_id: node-service
 display_name: Node Service
-description: Scaffold a Node.js backend unit sourced from space-ops-apps.
+description: Scaffold a Node.js backend unit sourced from space-ops-apps or space-ops-platform.
 runtime_kind: service
 allowed_package_owners:
+  - space-ops-platform
   - space-ops-apps
 default_build_command: node --check server.js
 default_run_command: node server.js

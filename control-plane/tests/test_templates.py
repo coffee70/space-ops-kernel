@@ -78,6 +78,25 @@ def test_scaffolded_service_manifest_includes_service_slug(client) -> None:
     assert manifest["discovery"]["capabilities"] == []
 
 
+def test_node_service_scaffold_uses_platform_default_path_for_platform_owner(client) -> None:
+    response = client.post(
+        "/templates/node-service/scaffold",
+        json={
+            "branch": "main",
+            "unit_id": "agent-runtime-service",
+            "display_name": "Agent Runtime Service",
+            "package_owner": "space-ops-platform",
+        },
+    )
+    assert response.status_code == 200
+
+    manifest = response.json()["manifest"]
+    changed_files = response.json()["changed_files"]
+    assert manifest["package_owner"] == "space-ops-platform"
+    assert manifest["source_path"] == "project/space-ops-platform/backend/services/agent-runtime-service"
+    assert "project/space-ops-platform/backend/services/agent-runtime-service/.gitignore" in changed_files
+
+
 def test_template_request_does_not_reimport_seed_source(client, control_plane_env) -> None:
     file_path = "project/space-ops-apps/README.md"
 
