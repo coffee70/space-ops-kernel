@@ -5,21 +5,22 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+import app.config
 from app.db import get_db
 from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
+from app.models.runtime import ManagedBranch, utcnow
 from app.schemas import BranchCreateRequest, CommitCreateRequest, DeploymentSubmissionRequest, Envelope, FileWriteRequest
 
 router = APIRouter(prefix="/code", tags=["code"])
 
 
 def get_repository() -> ManagedGitRepository:
-    return ManagedGitRepository(get_settings())
+    return ManagedGitRepository(app.config.get_settings())
 
 
 def get_deployment_service(session: Session = Depends(get_db)) -> DeploymentService:
-    settings = get_settings()
+    settings = app.config.get_settings()
     return DeploymentService(settings, ManagedGitRepository(settings), session)
 
 
@@ -93,9 +94,33 @@ def get_branches(repository: ManagedGitRepository = Depends(get_repository)) -> 
 def create_branch(
     request: BranchCreateRequest,
     repository: ManagedGitRepository = Depends(get_repository),
+    session: Session = Depends(get_db),
 ) -> Envelope:
     try:
+        base_commit_sha = repository.get_head_commit(request.from_branch)
         commit_sha = repository.create_branch(request.branch, request.from_branch)
+        worktree = repository.ensure_branch_worktree(request.branch, from_branch=request.from_branch)
+        branch_record = session.query(ManagedBranch).filter(ManagedBranch.branch_name == request.branch).one_or_none()
+        if branch_record is None:
+            branch_record = ManagedBranch(
+                branch_name=request.branch,
+                repository_root=str(repository.settings.bare_repo_dir),
+                worktree_path=str(worktree),
+                base_branch=request.from_branch,
+                base_commit_sha=base_commit_sha,
+                created_commit_sha=commit_sha,
+                delete_eligible=request.branch != "main",
+            )
+            session.add(branch_record)
+        else:
+            branch_record.repository_root = str(repository.settings.bare_repo_dir)
+            branch_record.worktree_path = str(worktree)
+            branch_record.base_branch = request.from_branch
+            branch_record.base_commit_sha = base_commit_sha
+            branch_record.created_commit_sha = commit_sha
+            branch_record.delete_eligible = request.branch != "main"
+            branch_record.updated_at = utcnow()
+        session.flush()
         return Envelope(branch=request.branch, commit_sha=commit_sha, changed_files=[], data={"created": True})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

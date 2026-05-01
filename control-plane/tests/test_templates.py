@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import yaml
 
 
@@ -35,8 +33,7 @@ def test_template_catalog_and_scaffold(client) -> None:
     assert "manifests/units/thermal-balance-application.yaml" in payload["changed_files"]
     assert "project/space-ops-apps/applications/thermal-balance-application/server.js" in payload["changed_files"]
 
-    workspace = Path(client.get("/health").json()["workspace_root"]).parent
-    manifest = yaml.safe_load((workspace / "manifests/units/thermal-balance-application.yaml").read_text(encoding="utf-8"))
+    manifest = payload["data"]["manifest"]
     assert manifest["runtime_template"] == "frontend-embedded-application"
     assert manifest["application"]["application_id"] == "thermal-balance"
     assert manifest["application"]["route_path"] == "/apps/thermal-balance"
@@ -83,18 +80,19 @@ def test_node_service_scaffold_uses_platform_default_path_for_platform_owner(cli
         "/templates/node-service/scaffold",
         json={
             "branch": "main",
-            "unit_id": "agent-runtime-service",
+            "unit_id": "ops-assistant-service",
             "display_name": "Agent Runtime Service",
             "package_owner": "space-ops-platform",
         },
     )
     assert response.status_code == 200
 
-    manifest = response.json()["manifest"]
-    changed_files = response.json()["changed_files"]
+    payload = response.json()
+    manifest = payload["data"]["manifest"]
+    changed_files = payload["changed_files"]
     assert manifest["package_owner"] == "space-ops-platform"
-    assert manifest["source_path"] == "project/space-ops-platform/backend/services/agent-runtime-service"
-    assert "project/space-ops-platform/backend/services/agent-runtime-service/.gitignore" in changed_files
+    assert manifest["source_path"] == "project/space-ops-platform/backend/services/ops-assistant-service"
+    assert "project/space-ops-platform/backend/services/ops-assistant-service/.gitignore" in changed_files
 
 
 def test_template_request_does_not_reimport_seed_source(client, control_plane_env) -> None:

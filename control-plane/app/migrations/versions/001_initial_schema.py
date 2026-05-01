@@ -27,6 +27,7 @@ def upgrade() -> None:
         sa.Column("deployment_status", sa.String(length=64), nullable=False),
         sa.Column("health_status", sa.String(length=64), nullable=False),
         sa.Column("discovery_metadata_json", sa.JSON(), nullable=False),
+        sa.Column("delete_eligible", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
@@ -50,6 +51,7 @@ def upgrade() -> None:
         sa.Column("failure_reason", sa.Text(), nullable=True),
         sa.Column("artifact_ref", sa.String(length=1024), nullable=True),
         sa.Column("runtime_ref", sa.JSON(), nullable=True),
+        sa.Column("delete_eligible", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     op.create_index("ix_deployments_unit_id", "deployments", ["unit_id"])
 
@@ -98,6 +100,7 @@ def upgrade() -> None:
         sa.Column("owner", sa.String(length=120), nullable=True),
         sa.Column("health_status", sa.String(length=64), nullable=False, server_default="unknown"),
         sa.Column("deployment_status", sa.String(length=64), nullable=False, server_default="seeded"),
+        sa.Column("delete_eligible", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
@@ -155,6 +158,7 @@ def upgrade() -> None:
         sa.Column("runtime_ref", sa.JSON(), nullable=True),
         sa.Column("status", sa.String(length=64), nullable=False),
         sa.Column("health_status", sa.String(length=64), nullable=False),
+        sa.Column("delete_eligible", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )
@@ -176,8 +180,63 @@ def upgrade() -> None:
     )
     op.create_index("ix_application_audit_events_application_id", "application_audit_events", ["application_id"])
 
+    op.create_table(
+        "managed_branches",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
+        sa.Column("branch_name", sa.String(length=255), nullable=False),
+        sa.Column("repository_root", sa.String(length=1024), nullable=False),
+        sa.Column("worktree_path", sa.String(length=1024), nullable=False),
+        sa.Column("base_branch", sa.String(length=255), nullable=False),
+        sa.Column("base_commit_sha", sa.String(length=64), nullable=True),
+        sa.Column("created_commit_sha", sa.String(length=64), nullable=True),
+        sa.Column("created_by_tool_call_id", sa.String(length=64), nullable=True),
+        sa.Column("created_by_conversation_id", sa.String(length=64), nullable=True),
+        sa.Column("created_by_request_id", sa.String(length=64), nullable=True),
+        sa.Column("associated_unit_id", sa.String(length=255), nullable=True),
+        sa.Column("associated_deployment_id", sa.String(length=64), nullable=True),
+        sa.Column("delete_eligible", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_index("ux_managed_branches_branch_name", "managed_branches", ["branch_name"], unique=True)
+    op.create_index("ix_managed_branches_associated_unit_id", "managed_branches", ["associated_unit_id"])
+    op.create_index("ix_managed_branches_associated_deployment_id", "managed_branches", ["associated_deployment_id"])
+
+    op.create_table(
+        "resource_delete_events",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
+        sa.Column("delete_id", sa.String(length=64), nullable=False),
+        sa.Column("delete_scope_id", sa.String(length=255), nullable=True),
+        sa.Column("event_type", sa.String(length=64), nullable=False),
+        sa.Column("mode", sa.String(length=64), nullable=False),
+        sa.Column("resource_type", sa.String(length=64), nullable=True),
+        sa.Column("resource_id", sa.String(length=255), nullable=True),
+        sa.Column("operation", sa.String(length=64), nullable=True),
+        sa.Column("status", sa.String(length=64), nullable=False),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("details_json", sa.JSON(), nullable=True),
+        sa.Column("request_id", sa.String(length=64), nullable=True),
+        sa.Column("agent_run_id", sa.String(length=64), nullable=True),
+        sa.Column("tool_call_id", sa.String(length=64), nullable=True),
+        sa.Column("conversation_id", sa.String(length=64), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_index("ix_resource_delete_events_delete_id", "resource_delete_events", ["delete_id"])
+    op.create_index("ix_resource_delete_events_delete_scope_id", "resource_delete_events", ["delete_scope_id"])
+    op.create_index("ix_resource_delete_events_resource_id", "resource_delete_events", ["resource_id"])
+
 
 def downgrade() -> None:
+    op.drop_index("ix_resource_delete_events_resource_id", table_name="resource_delete_events")
+    op.drop_index("ix_resource_delete_events_delete_scope_id", table_name="resource_delete_events")
+    op.drop_index("ix_resource_delete_events_delete_id", table_name="resource_delete_events")
+    op.drop_table("resource_delete_events")
+
+    op.drop_index("ix_managed_branches_associated_deployment_id", table_name="managed_branches")
+    op.drop_index("ix_managed_branches_associated_unit_id", table_name="managed_branches")
+    op.drop_index("ux_managed_branches_branch_name", table_name="managed_branches")
+    op.drop_table("managed_branches")
+
     op.drop_index("ix_application_audit_events_application_id", table_name="application_audit_events")
     op.drop_table("application_audit_events")
 

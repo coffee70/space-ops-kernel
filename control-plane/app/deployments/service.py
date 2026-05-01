@@ -35,10 +35,10 @@ class DeploymentService:
         self.session = session
         self.registry = RegistryService(session)
 
-    def submit(self, request: DeploymentSubmissionRequest) -> DeploymentRecordResponse:
+    def submit(self, request: DeploymentSubmissionRequest, *, delete_eligible: bool = True) -> DeploymentRecordResponse:
         branch = request.branch
         commit_sha = self.repository.resolve_commit(branch, request.commit_sha)
-        deployment = self.registry.create_deployment(request.unit_id, branch, commit_sha)
+        deployment = self.registry.create_deployment(request.unit_id, branch, commit_sha, delete_eligible=delete_eligible)
         logs_path = self.settings.deployment_logs_root / f"{deployment.deployment_id}.log"
         logs_path.parent.mkdir(parents=True, exist_ok=True)
 

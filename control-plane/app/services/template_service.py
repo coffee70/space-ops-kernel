@@ -70,7 +70,7 @@ class TemplateService:
         changed_files: list[str] = []
         files_root = self.templates_root / template_id / "files"
         for source_file in sorted(files_root.rglob("*")):
-            if source_file.is_dir():
+            if source_file.is_dir() or "__pycache__" in source_file.parts or source_file.suffix == ".pyc":
                 continue
             relative = source_file.relative_to(files_root)
             rendered_relative = self._render_template_string(relative.as_posix(), replacements)

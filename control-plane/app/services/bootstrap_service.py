@@ -226,7 +226,8 @@ class RuntimeBootstrapper:
                 if self._deployment_is_current(registry, deployment_service, unit_id, commit_sha):
                     continue
                 result = deployment_service.submit(
-                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha)
+                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
+                    delete_eligible=False,
                 )
                 session.commit()
                 if result.status != "healthy":
