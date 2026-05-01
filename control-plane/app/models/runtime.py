@@ -221,7 +221,6 @@ class ResourceDeleteEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     delete_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    delete_scope_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     mode: Mapped[str] = mapped_column(String(64), nullable=False)
     resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -206,7 +206,6 @@ def upgrade() -> None:
         "resource_delete_events",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
         sa.Column("delete_id", sa.String(length=64), nullable=False),
-        sa.Column("delete_scope_id", sa.String(length=255), nullable=True),
         sa.Column("event_type", sa.String(length=64), nullable=False),
         sa.Column("mode", sa.String(length=64), nullable=False),
         sa.Column("resource_type", sa.String(length=64), nullable=True),
@@ -222,13 +221,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
     op.create_index("ix_resource_delete_events_delete_id", "resource_delete_events", ["delete_id"])
-    op.create_index("ix_resource_delete_events_delete_scope_id", "resource_delete_events", ["delete_scope_id"])
     op.create_index("ix_resource_delete_events_resource_id", "resource_delete_events", ["resource_id"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_resource_delete_events_resource_id", table_name="resource_delete_events")
-    op.drop_index("ix_resource_delete_events_delete_scope_id", table_name="resource_delete_events")
     op.drop_index("ix_resource_delete_events_delete_id", table_name="resource_delete_events")
     op.drop_table("resource_delete_events")
 

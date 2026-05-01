@@ -160,8 +160,8 @@ class ManagedResourceDeleteService:
         self.session.flush()
         return self._complete(report, request)
 
-    def delete_stale(self, request: DeleteStaleRequest, *, delete_scope_id: str | None = None) -> DeleteReport:
-        report = self._new_report("stale" if delete_scope_id is None else "scope", delete_scope_id=delete_scope_id)
+    def delete_stale(self, request: DeleteStaleRequest) -> DeleteReport:
+        report = self._new_report("stale")
         cutoff = utcnow() - timedelta(minutes=request.older_than_minutes)
         self._record_event(report, "resource_delete.started", "started", operation="delete_stale", details={**self._trace(request), "cutoff": cutoff.isoformat()})
         units = (
@@ -380,8 +380,8 @@ class ManagedResourceDeleteService:
             return [docker_cli, "compose", "-p", self.settings.compose_project_name]
         raise FileNotFoundError("docker compose client not found")
 
-    def _new_report(self, mode: str, delete_scope_id: str | None = None) -> DeleteReport:
-        return DeleteReport(mode=mode, delete_id=f"delete_{uuid4().hex[:12]}", delete_scope_id=delete_scope_id, started_at=utcnow())
+    def _new_report(self, mode: str) -> DeleteReport:
+        return DeleteReport(mode=mode, delete_id=f"delete_{uuid4().hex[:12]}", started_at=utcnow())
 
     def _add(self, report: DeleteReport, bucket: str, resource_type: str, resource_id: str, operation: str, reason: str | None = None, details: dict[str, Any] | None = None) -> None:
         status = "error" if bucket == "errors" else bucket[:-1] if bucket.endswith("s") else bucket
@@ -435,7 +435,6 @@ class ManagedResourceDeleteService:
         self.session.add(
             ResourceDeleteEvent(
                 delete_id=report.delete_id,
-                delete_scope_id=report.delete_scope_id,
                 event_type=event_type,
                 mode=report.mode,
                 resource_type=resource_type,

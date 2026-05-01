@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 import app.config
 from app.db import get_db
-from app.delete.schemas import DeleteCodeRequest, DeleteManagedUnitRequest, DeleteReport, DeleteScopeRequest, DeleteStaleRequest
+from app.delete.schemas import DeleteCodeRequest, DeleteManagedUnitRequest, DeleteReport, DeleteStaleRequest
 from app.delete.service import DeleteValidationError, ManagedResourceDeleteService
 from app.git.repository import ManagedGitRepository
 
@@ -39,22 +39,6 @@ def delete_code(
         return service.delete_code(request)
     except DeleteValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/scopes/{delete_scope_id}", response_model=DeleteReport)
-def delete_scope(
-    delete_scope_id: str,
-    request: DeleteScopeRequest,
-    service: ManagedResourceDeleteService = Depends(get_delete_service),
-) -> DeleteReport:
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "error_code": "delete_scope_not_implemented",
-            "message": "scope delete requires persisted scope associations and is disabled for this subphase",
-            "delete_scope_id": delete_scope_id,
-        },
-    )
 
 
 @router.post("/stale", response_model=DeleteReport)

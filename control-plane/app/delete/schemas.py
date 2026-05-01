@@ -31,10 +31,6 @@ class DeleteCodeRequest(DeleteRequestBase):
     paths: list[str] = Field(default_factory=list)
 
 
-class DeleteScopeRequest(DeleteRequestBase):
-    older_than_minutes: int | None = Field(default=None, ge=1)
-
-
 class DeleteStaleRequest(DeleteRequestBase):
     older_than_minutes: int = Field(ge=1)
 
@@ -51,7 +47,6 @@ class DeleteReportItem(BaseModel):
 class DeleteReport(BaseModel):
     mode: str = Field(exclude=True)
     delete_id: str
-    delete_scope_id: str | None = None
     deleted: list[DeleteReportItem] = Field(default_factory=list)
     removed: list[DeleteReportItem] = Field(default_factory=list)
     already_absent: list[DeleteReportItem] = Field(default_factory=list)

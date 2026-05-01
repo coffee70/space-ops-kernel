@@ -209,22 +209,28 @@ def test_delete_code_reports_unsafe_paths_as_refused(client) -> None:
     assert {item["resource_id"] for item in refused} >= {"../secrets", "https://example.test/x", "project/*"}
 
 
-def test_scope_delete_is_disabled_and_does_not_delete_unrelated_stale_resources(client) -> None:
+def test_delete_api_routes_are_limited_to_supported_operations(client) -> None:
     from app.config import get_settings
     from app.db import get_session_factory
     from app.models.runtime import ManagedUnit, utcnow
+    from app.main import app
 
     with get_session_factory()() as session:
         unit = _add_unit(session, unit_id="stale-deleteable-service", delete_eligible=True)
         unit.created_at = utcnow() - timedelta(hours=4)
         session.commit()
 
-    response = client.post(
-        "/internal/delete/scopes/demo-scope",
-        json={"include_code": True, "include_runtime": True, "include_registry": True},
-    )
-    assert response.status_code == 409
-    assert response.json()["detail"]["error_code"] == "delete_scope_not_implemented"
+    delete_routes = {
+        route.path
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/internal/delete")
+        and "POST" in getattr(route, "methods", set())
+    }
+    assert delete_routes == {
+        "/internal/delete/managed-units",
+        "/internal/delete/code",
+        "/internal/delete/stale",
+    }
 
     with get_session_factory()() as session:
         assert session.get(ManagedUnit, "stale-deleteable-service") is not None
