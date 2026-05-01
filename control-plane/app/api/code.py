@@ -97,6 +97,7 @@ def create_branch(
     session: Session = Depends(get_db),
 ) -> Envelope:
     try:
+        branch_exists_before = request.branch in repository.list_branches()
         base_commit_sha = repository.get_head_commit(request.from_branch)
         commit_sha = repository.create_branch(request.branch, request.from_branch)
         worktree = repository.ensure_branch_worktree(request.branch, from_branch=request.from_branch)
@@ -109,7 +110,7 @@ def create_branch(
                 base_branch=request.from_branch,
                 base_commit_sha=base_commit_sha,
                 created_commit_sha=commit_sha,
-                delete_eligible=request.branch != "main",
+                delete_eligible=not branch_exists_before,
             )
             session.add(branch_record)
         else:
@@ -118,7 +119,6 @@ def create_branch(
             branch_record.base_branch = request.from_branch
             branch_record.base_commit_sha = base_commit_sha
             branch_record.created_commit_sha = commit_sha
-            branch_record.delete_eligible = request.branch != "main"
             branch_record.updated_at = utcnow()
         session.flush()
         return Envelope(branch=request.branch, commit_sha=commit_sha, changed_files=[], data={"created": True})

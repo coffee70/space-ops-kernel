@@ -47,18 +47,14 @@ def delete_scope(
     request: DeleteScopeRequest,
     service: ManagedResourceDeleteService = Depends(get_delete_service),
 ) -> DeleteReport:
-    stale_request = DeleteStaleRequest(
-        older_than_minutes=request.older_than_minutes or 1,
-        include_code=request.include_code,
-        include_runtime=request.include_runtime,
-        include_registry=request.include_registry,
-        include_intelligence_records=request.include_intelligence_records,
-        request_id=request.request_id,
-        agent_run_id=request.agent_run_id,
-        tool_call_id=request.tool_call_id,
-        conversation_id=request.conversation_id,
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "error_code": "delete_scope_not_implemented",
+            "message": "scope delete requires persisted scope associations and is disabled for this subphase",
+            "delete_scope_id": delete_scope_id,
+        },
     )
-    return service.delete_stale(stale_request, delete_scope_id=delete_scope_id)
 
 
 @router.post("/stale", response_model=DeleteReport)

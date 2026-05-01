@@ -65,7 +65,14 @@ class ManagedResourceDeleteService:
             self._record_event(report, "resource_delete.failed", "refused", resource_type="managed_unit", resource_id=unit.unit_id, operation="authorize", message="managed unit delete_eligible is false", details=self._trace(request))
             return self._complete(report, request)
 
-        deployments = self._deployments_for_unit(unit.unit_id, request.deployment_id)
+        all_deployments = self._deployments_for_unit(unit.unit_id, None)
+        if self._refuse_protected_children(report, all_deployments):
+            self._add(report, "refused", "managed_unit", unit.unit_id, "authorize", "managed unit has protected child resources")
+            return self._complete(report, request)
+
+        deployments = all_deployments
+        if request.deployment_id:
+            deployments = [deployment for deployment in all_deployments if deployment.deployment_id == request.deployment_id]
         application_ids = {
             row.application_id
             for deployment in deployments
@@ -76,9 +83,6 @@ class ManagedResourceDeleteService:
         if request.deployment_id and not deployments:
             self._add(report, "already_absent", "deployment", request.deployment_id, "resolve", "deployment row already absent")
         for deployment in deployments:
-            if not deployment.delete_eligible:
-                self._add(report, "refused", "deployment", deployment.deployment_id, "authorize", "deployment delete_eligible is false")
-                continue
             if request.include_runtime:
                 self._remove_runtime(report, deployment)
                 self._remove_deployment_files(report, deployment)
@@ -97,6 +101,31 @@ class ManagedResourceDeleteService:
             self._add(report, "deleted", "managed_unit", unit.unit_id, "delete_row")
         self.session.flush()
         return self._complete(report, request)
+
+    def _refuse_protected_children(self, report: DeleteReport, deployments: list[Deployment]) -> bool:
+        refused = False
+        for deployment in deployments:
+            if not deployment.delete_eligible:
+                self._add(report, "refused", "deployment", deployment.deployment_id, "authorize", "deployment delete_eligible is false")
+                refused = True
+            app_deployments = (
+                self.session.query(ApplicationDeployment)
+                .filter(ApplicationDeployment.deployment_id == deployment.deployment_id)
+                .all()
+            )
+            for app_deployment in app_deployments:
+                if not app_deployment.delete_eligible:
+                    self._add(
+                        report,
+                        "refused",
+                        "application_deployment",
+                        app_deployment.deployment_id,
+                        "authorize",
+                        "application_deployment delete_eligible is false",
+                        details={"application_id": app_deployment.application_id},
+                    )
+                    refused = True
+        return refused
 
     def delete_code(self, request: DeleteCodeRequest) -> DeleteReport:
         report = self._new_report("code")
@@ -243,12 +272,31 @@ class ManagedResourceDeleteService:
 
     def _delete_deployment_rows(self, report: DeleteReport, deployment: Deployment) -> None:
         deployment_id = deployment.deployment_id
+        app_deployments = (
+            self.session.query(ApplicationDeployment)
+            .filter(ApplicationDeployment.deployment_id == deployment_id)
+            .all()
+        )
+        protected_app_deployments = [row for row in app_deployments if not row.delete_eligible]
+        if protected_app_deployments:
+            for row in protected_app_deployments:
+                self._add(
+                    report,
+                    "refused",
+                    "application_deployment",
+                    row.deployment_id,
+                    "authorize",
+                    "application_deployment delete_eligible is false",
+                    details={"application_id": row.application_id},
+                )
+            return
         self.session.execute(delete(UnitHealthSnapshot).where(UnitHealthSnapshot.deployment_id == deployment_id))
         self._add(report, "deleted", "unit_health_snapshot", deployment_id, "delete_rows")
         self.session.execute(delete(DeploymentEvent).where(DeploymentEvent.deployment_id == deployment_id))
         self._add(report, "deleted", "deployment_event", deployment_id, "delete_rows")
-        self.session.execute(delete(ApplicationDeployment).where(ApplicationDeployment.deployment_id == deployment_id))
-        self._add(report, "deleted", "application_deployment", deployment_id, "delete_rows")
+        for row in app_deployments:
+            self.session.delete(row)
+            self._add(report, "deleted", "application_deployment", row.deployment_id, "delete_row", details={"application_id": row.application_id})
         self.session.delete(deployment)
         self._add(report, "deleted", "deployment", deployment_id, "delete_row")
 
