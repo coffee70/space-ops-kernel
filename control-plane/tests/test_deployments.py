@@ -3,6 +3,105 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def test_phase3_fixture_service_can_scaffold_write_commit_deploy_and_delete(client) -> None:
+    from app.db import get_session_factory
+    from app.models.runtime import Deployment, ManagedUnit
+
+    unit_id = "phase3-test-fixture-service"
+    branch = "feature/phase3-no-llm"
+    main_path = f"project/space-ops-platform/backend/services/{unit_id}/app/main.py"
+    requirements_path = f"project/space-ops-platform/backend/services/{unit_id}/requirements.txt"
+
+    branch_response = client.post("/code/branches", json={"branch": branch, "from_branch": "main"})
+    assert branch_response.status_code == 200
+
+    scaffold_response = client.post(
+        "/templates/python-service/scaffold",
+        json={
+            "branch": branch,
+            "unit_id": unit_id,
+            "display_name": "Phase 3 Test Fixture Service",
+            "package_owner": "space-ops-platform",
+            "source_path": f"project/space-ops-platform/backend/services/{unit_id}",
+            "discovery": {
+                "service_slug": unit_id,
+                "capabilities": ["phase3-test-fixture"],
+                "health_endpoint": "/health",
+            },
+        },
+    )
+    assert scaffold_response.status_code == 200
+
+    requirements_response = client.put(
+        "/code/file",
+        json={
+            "branch": branch,
+            "path": requirements_path,
+            "content": "fastapi>=0.109\nuvicorn[standard]>=0.27\n",
+        },
+    )
+    assert requirements_response.status_code == 200
+
+    main_response = client.put(
+        "/code/file",
+        json={
+            "branch": branch,
+            "path": main_path,
+            "content": (
+                "from fastapi import FastAPI\n"
+                "app = FastAPI()\n"
+                "@app.get('/health')\n"
+                "def health():\n"
+                "    return {'status': 'ok', 'service': 'phase3-test-fixture-service'}\n"
+                "@app.get('/metadata')\n"
+                "def metadata():\n"
+                "    return {'display_name': 'Phase 3 Test Fixture Service', 'mode': 'deterministic'}\n"
+            ),
+        },
+    )
+    assert main_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": branch, "message": "Add deterministic Phase 3 fixture service"},
+    )
+    assert commit_response.status_code == 200
+
+    deploy_response = client.post("/deployments", json={"unit_id": unit_id, "branch": branch})
+    assert deploy_response.status_code == 200
+    deployment_payload = deploy_response.json()
+    assert deployment_payload["status"] == "healthy"
+    assert deployment_payload["registered"] is True
+
+    registry = client.get("/registry/services")
+    assert registry.status_code == 200
+    service = next(item for item in registry.json() if item["unitId"] == unit_id)
+    assert service["serviceSlug"] == unit_id
+    assert service["deploymentStatus"] == "healthy"
+    assert service["healthStatus"] == "passing"
+
+    with get_session_factory()() as session:
+        unit = session.get(ManagedUnit, unit_id)
+        deployment = session.get(Deployment, deployment_payload["deployment_id"])
+        assert unit is not None
+        assert deployment is not None
+        assert unit.delete_eligible is True
+        assert deployment.delete_eligible is True
+        assert deployment.runtime_ref is not None
+        assert deployment.runtime_ref["health"]["path"] == "/health"
+
+    delete_response = client.post("/internal/delete/managed-units", json={"unit_id": unit_id})
+    assert delete_response.status_code == 200
+    delete_payload = delete_response.json()
+    assert any(item["resource_type"] == "managed_unit" and item["resource_id"] == unit_id for item in delete_payload["deleted"])
+    assert client.get(f"/registry/services/{unit_id}").status_code == 404
+    assert client.get(f"/internal/runtime-services/{unit_id}/health").status_code == 404
+
+    repeat_delete = client.post("/internal/delete/managed-units", json={"unit_id": unit_id})
+    assert repeat_delete.status_code == 200
+    assert any(item["resource_type"] == "managed_unit" and item["resource_id"] == unit_id for item in repeat_delete.json()["already_absent"])
+
+
 def test_successful_deployment_updates_registry(client) -> None:
     from app.db import get_session_factory
     from app.models.runtime import Deployment
