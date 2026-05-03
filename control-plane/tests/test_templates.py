@@ -74,6 +74,15 @@ def test_scaffolded_service_manifest_includes_service_slug(client) -> None:
     assert manifest["discovery"]["service_slug"] == "ai-safety-service"
     assert manifest["discovery"]["capabilities"] == []
 
+    dockerfile_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": "project/space-ops-platform/backend/services/ai-safety-service/Dockerfile"},
+    )
+    assert dockerfile_response.status_code == 200
+    dockerfile = dockerfile_response.json()["data"]["content"]
+    assert "COPY . /app" in dockerfile
+    assert "COPY project/space-ops-platform" not in dockerfile
+
 
 def test_node_service_scaffold_uses_platform_default_path_for_platform_owner(client) -> None:
     response = client.post(
