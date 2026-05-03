@@ -65,4 +65,14 @@ docker compose build
 docker compose up -d
 docker compose ps
 docker compose logs -f platform-api
+./scripts/validate-node.sh
+./scripts/validate-playwright.sh smoke
+```
+
+For Playwright validation from a browser container on the Compose network, build and run `mission-control-ui` with internal browser-facing service URLs:
+
+```bash
+NEXT_PUBLIC_API_URL=http://platform-api:8000 \
+NEXT_PUBLIC_CONTROL_PLANE_URL=http://control-plane:8100 \
+docker compose up -d --build mission-control-ui
 ```
