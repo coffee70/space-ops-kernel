@@ -280,17 +280,34 @@ class DeploymentService:
             "command": manifest.run.command,
             "environment": self._build_runtime_env(manifest, service_name),
         }
-        if manifest.unit_id == "vehicle-config-service":
-            workspace_root = self.settings.workspace_root.resolve()
-            host_bundle = workspace_root / "space-ops-apps" / "vehicle-configurations"
-            if host_bundle.is_dir():
-                compose_dir = self.settings.generated_compose_root
-                compose_dir.mkdir(parents=True, exist_ok=True)
-                rel_host = Path(os.path.relpath(host_bundle.resolve(), compose_dir.resolve())).as_posix()
-                service_spec["volumes"] = [f"{rel_host}:/app/vehicle-configurations:ro"]
+        volume_entries = self._compose_volume_entries(manifest)
+        if volume_entries:
+            service_spec["volumes"] = volume_entries
 
         payload = {"services": {service_name: service_spec}}
         return payload
+
+    def _compose_volume_entries(self, manifest: UnitManifest) -> list[str]:
+        """Bind-mount declared host paths into the service (paths relative to generated compose dir)."""
+
+        workspace_root = self.settings.workspace_root.resolve()
+        compose_dir = self.settings.generated_compose_root
+        compose_dir.mkdir(parents=True, exist_ok=True)
+        compose_resolved = compose_dir.resolve()
+
+        entries: list[str] = []
+        for mount in manifest.mounts:
+            host_path = (workspace_root / mount.source).resolve()
+            try:
+                host_path.relative_to(workspace_root)
+            except ValueError as exc:
+                raise ValueError(f"mount source resolves outside workspace_root: {mount.source}") from exc
+            if not host_path.is_dir():
+                continue
+            rel_host = Path(os.path.relpath(str(host_path), str(compose_resolved))).as_posix()
+            mode = "ro" if mount.read_only else "rw"
+            entries.append(f"{rel_host}:{mount.target}:{mode}")
+        return entries
 
     def _build_context_path(self, manifest: UnitManifest, source_root: Path) -> Path:
         if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":
