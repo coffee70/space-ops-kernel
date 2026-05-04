@@ -104,13 +104,14 @@ services:
       context: ../space-ops-apps/mission-control-ui
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        # Same-origin + next.config fallback rewrites to API_SERVER_URL (browser cannot reach localhost:8000 from Playwright/Compose net).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
         NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
     container_name: telemetry-mission-control-ui
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
       NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
       API_SERVER_URL: http://platform-api:8000
       CONTROL_PLANE_SERVER_URL: http://control-plane:8100
