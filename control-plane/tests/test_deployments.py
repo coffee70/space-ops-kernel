@@ -332,6 +332,51 @@ def test_platform_node_service_deployment_uses_nested_source_root(control_plane_
     assert service["command"] == "node dist/server.js"
 
 
+def test_vehicle_config_service_compose_mounts_apps_vehicle_configurations(
+    control_plane_env: Path,
+) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    unit_root = source_root / "project" / "space-ops-platform"
+    unit_root.mkdir(parents=True, exist_ok=True)
+    host_bundle = settings.workspace_root / "space-ops-apps" / "vehicle-configurations"
+    host_bundle.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(settings, object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="vehicle-config-service",
+            display_name="Vehicle Config Service",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="python-service",
+            source_path="project/space-ops-platform",
+            build=BuildSpec(command="pip install -r requirements.txt"),
+            run=RunSpec(
+                command=(
+                    "sh -c \"cd /app/platform/backend && uvicorn main:app "
+                    "--app-dir services/vehicle-config-service --host 0.0.0.0 --port 8080\""
+                )
+            ),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "vehicle-config-service"},
+        ),
+        source_root=source_root,
+        service_name="vehicle-config-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview-vc.env",
+    )
+    spec = next(iter(payload["services"].values()))
+    assert "volumes" in spec
+    assert len(spec["volumes"]) == 1
+    assert spec["volumes"][0].endswith(":/app/vehicle-configurations:ro")
+    assert not spec["volumes"][0].startswith("/")
+    assert "vehicle-configurations" in spec["volumes"][0]
+
+
 def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
     from app.config import get_settings
     from app.deployments.service import DeploymentService

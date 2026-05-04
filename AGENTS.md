@@ -37,10 +37,10 @@ Assume the sibling layout (`space-ops-kernel`, `space-ops-platform`, `space-ops-
 
    Prerequisites: Compose stack reachable on the expected network (`PLAYWRIGHT_DOCKER_NETWORK`, default `space-ops-kernel_default`), UI built with browser-reachable API URLs (`README.md` Testing section).
 
-3. **Python — platform backend (Layer 2):** see `space-ops-platform/README.md` (`pytest`). Layer 1 does not wrap this today.
+3. **Python — platform backend (Layer 2):** `../space-ops-platform/scripts/run-backend-tests.sh` (see Layer 2 README). Layer 1 does not wrap this today.
 
-4. **Python — control-plane in this repo:** integration tests create temporary databases via Postgres and shell out to `git`. Run from `control-plane/` with Postgres available (typically `docker compose up -d postgres` first). Details: `README.md`.
+4. **Python — control-plane in this repo:** integration tests create temporary databases via Postgres and shell out to `git`. Run **`./scripts/run-control-plane-tests.sh`** from **`space-ops-kernel`** with Postgres available (typically `docker compose up -d postgres` first); uses gitignored **`control-plane/.venv`**. Details: `README.md`.
 
-5. **Python — simulator / SatNOGS adapter:** see `space-ops-apps/README.md` (`PYTHONPATH` layout matters).
+5. **Python — simulator / SatNOGS adapter:** `../space-ops-apps/scripts/run-python-tests.sh` (see Layer 3 README).
 
 Agents should cite these entry points in summaries instead of improvised one-off `pytest`/`npm test` paths on the host when the canonical path exists.

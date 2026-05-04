@@ -56,8 +56,8 @@ Migrations run as part of service startup through Alembic for both backend servi
 |------|------------------------|-------|
 | **Node / TS — agent runtime + Mission Control** | `./scripts/validate-node.sh` | Runs **`npm ci` inside a Linux Node Docker image**, then agent-runtime `build` + `test` and Mission Control `npm run validate`. Use this instead of bare `npm test`/`npm run validate` on the host if `node_modules` might be from another OS/arch (copying deps from Compose builds is the usual culprit). Override image with `NODE_IMAGE`. |
 | **Playwright — browser/E2E** | `./scripts/validate-playwright.sh …` | Runs **`npm ci` inside the upstream Playwright image** and attaches the container to the Compose Docker network. Default base URL `http://mission-control-ui:3000`; see script env vars. **`smoke`** is the usual quick target. Full options: `./scripts/validate-playwright.sh help`. |
-| **Python — platform API** | [../space-ops-platform/README.md](../space-ops-platform/README.md) | `pytest` under `backend/tests`. |
-| **Python — control-plane (this repo)** | see below | Needs reachable **Postgres** and a working **`git`** on the runner; fixtures create ephemeral DBs. |
+| **Python — platform API** | [../space-ops-platform/README.md](../space-ops-platform/README.md) | `../space-ops-platform/scripts/run-backend-tests.sh` |
+| **Python — control-plane (this repo)** | `./scripts/run-control-plane-tests.sh` | Needs reachable **Postgres** and a working **`git`** on the runner; fixtures create ephemeral DBs. |
 | **Python — simulator / adapter** | [../space-ops-apps/README.md](../space-ops-apps/README.md) | **`PYTHONPATH` from `space-ops-apps`** is required so `simulator` / `satnogs_adapter` imports resolve. |
 
 Rough “confidence ladder”:
@@ -71,17 +71,31 @@ Rough “confidence ladder”:
 
 Integration tests migrate against a disposable database and exercise git-backed workflows.
 
+**Canonical** — from **`space-ops-kernel`** (venv at **`control-plane/.venv`**, matches `.gitignore`):
+
 ```bash
 # Ensure Postgres matches how you compose (telemetry user from default compose env):
 docker compose up -d postgres
 
+./scripts/run-control-plane-tests.sh
+```
+
+The script defaults `KERNEL_TEST_DATABASE_URL` to `postgresql://telemetry:telemetry@localhost:5432/postgres`. Override when your Postgres URL differs:
+
+```bash
+KERNEL_TEST_DATABASE_URL='postgresql://user:pass@host:5432/postgres' ./scripts/run-control-plane-tests.sh -q
+```
+
+Ad-hoc (manual venv):
+
+```bash
 cd control-plane
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt pytest
+pip install -r requirements.txt
 KERNEL_TEST_DATABASE_URL=postgresql://telemetry:telemetry@localhost:5432/postgres pytest tests
 ```
 
-`DATABASE_URL` or `KERNEL_TEST_DATABASE_URL` must point at a Postgres instance where tests may `CREATE DATABASE` helpers. Omit or adjust if your compose credentials differ.
+`DATABASE_URL` or `KERNEL_TEST_DATABASE_URL` must point at a Postgres instance where tests may `CREATE DATABASE` helpers.
 
 ### Playwright prerequisites (Compose network)
 
@@ -144,6 +158,7 @@ docker compose logs -f platform-api
 ```bash
 ./scripts/validate-node.sh
 ./scripts/validate-playwright.sh smoke
+./scripts/run-control-plane-tests.sh
 ```
 
 For Playwright-only help (targets / env overrides):

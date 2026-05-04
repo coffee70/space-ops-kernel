@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -271,18 +272,24 @@ class DeploymentService:
         except ValueError as exc:
             raise ValueError(f"deployment source path escapes exported commit: {manifest.source_path}") from exc
 
-        payload = {
-            "services": {
-                service_name: {
-                    "build": {
-                        "context": str(self._build_context_path(manifest, source_root)),
-                        "dockerfile": self._build_dockerfile_path(manifest),
-                    },
-                    "command": manifest.run.command,
-                    "environment": self._build_runtime_env(manifest, service_name),
-                }
-            }
+        service_spec: dict[str, Any] = {
+            "build": {
+                "context": str(self._build_context_path(manifest, source_root)),
+                "dockerfile": self._build_dockerfile_path(manifest),
+            },
+            "command": manifest.run.command,
+            "environment": self._build_runtime_env(manifest, service_name),
         }
+        if manifest.unit_id == "vehicle-config-service":
+            workspace_root = self.settings.workspace_root.resolve()
+            host_bundle = workspace_root / "space-ops-apps" / "vehicle-configurations"
+            if host_bundle.is_dir():
+                compose_dir = self.settings.generated_compose_root
+                compose_dir.mkdir(parents=True, exist_ok=True)
+                rel_host = Path(os.path.relpath(host_bundle.resolve(), compose_dir.resolve())).as_posix()
+                service_spec["volumes"] = [f"{rel_host}:/app/vehicle-configurations:ro"]
+
+        payload = {"services": {service_name: service_spec}}
         return payload
 
     def _build_context_path(self, manifest: UnitManifest, source_root: Path) -> Path:
