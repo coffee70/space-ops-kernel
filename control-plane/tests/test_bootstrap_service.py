@@ -113,7 +113,10 @@ def test_bootstrap_manifest_sync_creates_commit_when_seed_changes(control_plane_
     assert history[0]["subject"] == "Sync bootstrap manifests from control plane"
 
 
-def test_runtime_bootstrapper_excludes_deleted_embedded_demo_application() -> None:
+def test_runtime_bootstrapper_units_match_seed_manifest_inventory() -> None:
     from app.services.bootstrap_service import BOOTSTRAP_UNITS
 
-    assert "embedded-demo-application" not in BOOTSTRAP_UNITS
+    manifest_root = Path(__file__).resolve().parents[1] / "app" / "bootstrap" / "manifests"
+    manifest_unit_ids = tuple(sorted(path.stem for path in manifest_root.glob("*.yaml")))
+
+    assert tuple(sorted(BOOTSTRAP_UNITS)) == manifest_unit_ids

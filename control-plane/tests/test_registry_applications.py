@@ -94,14 +94,10 @@ def test_get_registry_applications_returns_seeded_catalog_in_order(client) -> No
         "sources",
         "ai-engineer",
     ]
-    assert {"workspace", "battery-efficiency", "embedded-demo"}.isdisjoint(
-        {item["applicationId"] for item in payload}
-    )
 
 
-@pytest.mark.parametrize("application_id", ["workspace", "embedded-demo", "battery-efficiency"])
-def test_get_registry_application_returns_404_for_deleted_applications(client, application_id: str) -> None:
-    response = client.get(f"/registry/applications/{application_id}")
+def test_get_registry_application_returns_404_for_unknown_application(client) -> None:
+    response = client.get("/registry/applications/unknown-application")
 
     assert response.status_code == 404
 
