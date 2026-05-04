@@ -49,7 +49,6 @@ BOOTSTRAP_UNITS = (
     "agent-runtime-service",
     "platform-api-gateway",
     "derived-telemetry-service",
-    "embedded-demo-application",
 )
 
 
@@ -167,12 +166,6 @@ class ManagedForkBootstrapper:
 
         for manifest_path in sorted(self._seed_manifests_root().glob("*.yaml")):
             seeded_files.append((Path("manifests") / "units" / manifest_path.name, manifest_path))
-
-        embedded_demo_root = self.settings.resolved_apps_source_root / "applications" / "embedded-demo-application"
-        if embedded_demo_root.exists():
-            for source_path in sorted(path for path in embedded_demo_root.rglob("*") if path.is_file()):
-                relative_source_path = source_path.relative_to(self.settings.resolved_apps_source_root)
-                seeded_files.append((Path("project") / "space-ops-apps" / relative_source_path, source_path))
 
         return seeded_files
 

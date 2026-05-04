@@ -92,17 +92,14 @@ def test_get_registry_applications_returns_seeded_catalog_in_order(client) -> No
         "telemetry",
         "planning",
         "sources",
-        "workspace",
-        "battery-efficiency",
-        "embedded-demo",
+        "ai-engineer",
     ]
 
-    workspace = next(item for item in payload if item["applicationId"] == "workspace")
-    assert workspace["applicationType"] == "embedded"
-    assert workspace["proxyBasePath"] is None
-    assert workspace["embeddedUrl"] == "/_embedded/workspace"
-    assert workspace["enabled"] is True
-    assert workspace["sortOrder"] == 50
+
+def test_get_registry_application_returns_404_for_unknown_application(client) -> None:
+    response = client.get("/registry/applications/unknown-application")
+
+    assert response.status_code == 404
 
 
 def test_application_registry_db_rejects_invalid_transport_contracts(client) -> None:
@@ -143,13 +140,13 @@ def test_application_registry_db_rejects_invalid_proxy_base_path(client) -> None
     )
 
 
-def test_application_registry_db_accepts_workspace_style_embedded_transport(client) -> None:
+def test_application_registry_db_accepts_internal_embedded_transport(client) -> None:
     _commit_application(
         _application_row(
-            "db-workspace",
+            "db-internal-embedded",
             application_type="embedded",
             loader_key=None,
-            embedded_url="/_embedded/workspace",
+            embedded_url="/_embedded/internal-test-app",
         ),
     )
 
