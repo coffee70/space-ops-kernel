@@ -229,25 +229,47 @@ def test_frontend_application_deployment_stores_structured_proxy_base_path(clien
     from app.db import get_session_factory
     from app.models.runtime import Application, Deployment, ManagedUnit
 
-    response = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
+    branch = "feature/synthetic-embedded-app"
+    assert client.post("/code/branches", json={"branch": branch, "from_branch": "main"}).status_code == 200
+    scaffold_response = client.post(
+        "/templates/frontend-embedded-application/scaffold",
+        json={
+            "branch": branch,
+            "unit_id": "proxy-backed-test-application",
+            "display_name": "Proxy Backed Test",
+            "package_owner": "space-ops-apps",
+            "discovery": {
+                "application_id": "proxy-backed-test",
+                "description": "Synthetic proxy-backed application fixture.",
+            },
+        },
+    )
+    assert scaffold_response.status_code == 200
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": branch, "message": "Add synthetic embedded application fixture"},
+    )
+    assert commit_response.status_code == 200
+
+    response = client.post("/deployments", json={"unit_id": "proxy-backed-test-application", "branch": branch})
     assert response.status_code == 200
     deployment_id = response.json()["deployment_id"]
 
     with get_session_factory()() as session:
         deployment = session.get(Deployment, deployment_id)
-        unit = session.get(ManagedUnit, "embedded-demo-application")
-        application = session.get(Application, "embedded-demo")
+        unit = session.get(ManagedUnit, "proxy-backed-test-application")
+        application = session.get(Application, "proxy-backed-test")
         assert deployment is not None
         assert unit is not None
         assert application is not None
         assert deployment.runtime_ref is not None
         assert deployment.runtime_ref["service_name"] == deployment.runtime_ref["transport"]["host"]
         assert deployment.runtime_ref["transport"]["port"] == 3100
-        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-applications/embedded-demo"
+        assert deployment.runtime_ref["proxy"]["base_path"] == "/runtime-applications/proxy-backed-test"
         assert "target_url" not in deployment.runtime_ref
         assert unit.discovery_metadata_json == {}
-        assert application.route_path == "/apps/embedded-demo"
-        assert application.proxy_base_path == "/runtime-applications/embedded-demo"
+        assert application.route_path == "/apps/proxy-backed-test"
+        assert application.proxy_base_path == "/runtime-applications/proxy-backed-test"
 
 
 def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> None:
@@ -256,32 +278,32 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
     from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
 
     source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
-    unit_root = source_root / "project" / "space-ops-apps" / "applications" / "embedded-demo-application"
+    unit_root = source_root / "project" / "space-ops-apps" / "applications" / "proxy-backed-test-application"
     unit_root.mkdir(parents=True, exist_ok=True)
 
     service = DeploymentService(get_settings(), object(), object())
     payload = service._build_compose_payload(
         manifest=UnitManifest(
-            unit_id="embedded-demo-application",
-            display_name="Embedded Demo",
+            unit_id="proxy-backed-test-application",
+            display_name="Proxy Backed Test",
             package_owner="space-ops-apps",
             runtime_kind="frontend_application",
             runtime_template="frontend-embedded-application",
-            source_path="project/space-ops-apps/applications/embedded-demo-application",
+            source_path="project/space-ops-apps/applications/proxy-backed-test-application",
             build=BuildSpec(command="node --check server.js"),
             run=RunSpec(command="node server.js"),
             health=HealthSpec(type="http", path="/health", port=3100),
             discovery={},
             application={
-                "application_id": "embedded-demo",
-                "title": "Embedded Demo",
-                "description": "Generic embedded runtime used to verify proxy-backed shell behavior.",
+                "application_id": "proxy-backed-test",
+                "title": "Proxy Backed Test",
+                "description": "Synthetic embedded runtime fixture.",
                 "icon_key": "monitor-smartphone",
                 "icon_color": "#38bdf8",
                 "icon_background": "rgba(56, 189, 248, 0.16)",
                 "application_type": "embedded",
-                "route_path": "/apps/embedded-demo",
-                "proxy_base_path": "/runtime-applications/embedded-demo",
+                "route_path": "/apps/proxy-backed-test",
+                "proxy_base_path": "/runtime-applications/proxy-backed-test",
                 "version": "0.1.0",
                 "enabled": True,
                 "iframe_sandbox": "allow-scripts allow-same-origin allow-forms",
@@ -291,12 +313,12 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
             },
         ),
         source_root=source_root,
-        service_name="embedded-demo-application-preview",
+        service_name="proxy-backed-test-application-preview",
         env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
     )
     service = next(iter(payload["services"].values()))
 
-    assert service["build"]["context"].endswith("/project/space-ops-apps/applications/embedded-demo-application")
+    assert service["build"]["context"].endswith("/project/space-ops-apps/applications/proxy-backed-test-application")
     assert service["build"]["dockerfile"] == "Dockerfile"
 
 

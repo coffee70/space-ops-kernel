@@ -4,6 +4,39 @@ import httpx
 import pytest
 from unittest.mock import ANY
 
+PROXY_FIXTURE_UNIT_ID = "proxy-backed-test-application"
+PROXY_FIXTURE_APP_ID = "proxy-backed-test"
+PROXY_FIXTURE_BRANCH = "feature/proxy-backed-test-application"
+
+
+def _deploy_proxy_fixture(client) -> dict:
+    branch = PROXY_FIXTURE_BRANCH
+    branch_response = client.post("/code/branches", json={"branch": branch, "from_branch": "main"})
+    assert branch_response.status_code == 200
+    scaffold_response = client.post(
+        "/templates/frontend-embedded-application/scaffold",
+        json={
+            "branch": branch,
+            "unit_id": PROXY_FIXTURE_UNIT_ID,
+            "display_name": "Proxy Backed Test",
+            "package_owner": "space-ops-apps",
+            "discovery": {
+                "application_id": PROXY_FIXTURE_APP_ID,
+                "description": "Synthetic proxy-backed application fixture.",
+            },
+        },
+    )
+    assert scaffold_response.status_code == 200
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": branch, "message": "Add synthetic proxy application fixture"},
+    )
+    assert commit_response.status_code == 200
+    deployment = client.post("/deployments", json={"unit_id": PROXY_FIXTURE_UNIT_ID, "branch": branch})
+    assert deployment.status_code == 200
+    runtime_ref, _ = _active_deployment_payload(PROXY_FIXTURE_UNIT_ID)
+    return runtime_ref
+
 
 def _active_deployment_payload(unit_id: str) -> tuple[dict, str]:
     from app.db import get_session_factory
@@ -96,16 +129,14 @@ class RecordingAsyncClient:
 def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
-    assert deployment.status_code == 200
-    runtime_ref, _ = _active_deployment_payload("embedded-demo-application")
+    runtime_ref = _deploy_proxy_fixture(client)
     calls: list[dict] = []
     response = httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
     RecordingAsyncClient.calls = calls
     RecordingAsyncClient.response = response
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
 
-    proxied = client.get("/runtime-applications/embedded-demo/events?limit=10")
+    proxied = client.get("/runtime-applications/proxy-backed-test/events?limit=10")
 
     assert proxied.status_code == 200
     assert proxied.json() == {"ok": True}
@@ -114,7 +145,7 @@ def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatc
             "method": "GET",
             "url": (
                 f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
-                "/runtime-applications/embedded-demo/events?limit=10"
+                "/runtime-applications/proxy-backed-test/events?limit=10"
             ),
             "headers": ANY,
             "content": None,
@@ -127,22 +158,20 @@ def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatc
 def test_application_proxy_prefixes_proxy_base_path(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
-    assert deployment.status_code == 200
-    runtime_ref, _ = _active_deployment_payload("embedded-demo-application")
+    runtime_ref = _deploy_proxy_fixture(client)
     calls: list[dict] = []
     response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
     RecordingAsyncClient.calls = calls
     RecordingAsyncClient.response = response
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
 
-    proxied = client.get("/runtime-applications/embedded-demo/assets/app.js?v=7")
+    proxied = client.get("/runtime-applications/proxy-backed-test/assets/app.js?v=7")
 
     assert proxied.status_code == 200
     assert proxied.text == "ok"
     assert calls[0]["url"] == (
         f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
-        "/runtime-applications/embedded-demo/assets/app.js?v=7"
+        "/runtime-applications/proxy-backed-test/assets/app.js?v=7"
     )
     assert calls[0]["follow_redirects"] is False
 
@@ -164,8 +193,7 @@ def test_application_proxy_prefixes_proxy_base_path(client, monkeypatch) -> None
 def test_application_proxy_rejects_unsafe_path_fragments(client, monkeypatch, path: str) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
-    assert deployment.status_code == 200
+    _deploy_proxy_fixture(client)
 
     calls: list[dict] = []
     response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
@@ -173,18 +201,17 @@ def test_application_proxy_rejects_unsafe_path_fragments(client, monkeypatch, pa
     RecordingAsyncClient.response = response
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
 
-    proxied = client.get(f"/runtime-applications/embedded-demo/{path}")
+    proxied = client.get(f"/runtime-applications/proxy-backed-test/{path}")
 
     assert proxied.status_code in {400, 404}
     assert calls == []
 
 
 def test_proxy_rejects_malformed_runtime_ref(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
-    assert deployment.status_code == 200
-    _set_active_application_runtime_ref("embedded-demo", {"service_name": "embedded-demo-application"})
+    _deploy_proxy_fixture(client)
+    _set_active_application_runtime_ref(PROXY_FIXTURE_APP_ID, {"service_name": PROXY_FIXTURE_UNIT_ID})
 
-    proxied = client.get("/runtime-applications/embedded-demo", follow_redirects=False)
+    proxied = client.get("/runtime-applications/proxy-backed-test", follow_redirects=False)
 
     assert proxied.status_code == 502
     assert proxied.json()["detail"] == "application has invalid runtime metadata"
@@ -193,8 +220,7 @@ def test_proxy_rejects_malformed_runtime_ref(client) -> None:
 def test_proxy_does_not_follow_redirects(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
-    assert deployment.status_code == 200
+    _deploy_proxy_fixture(client)
     calls: list[dict] = []
     response = httpx.Response(
         307,
@@ -205,7 +231,7 @@ def test_proxy_does_not_follow_redirects(client, monkeypatch) -> None:
     RecordingAsyncClient.response = response
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
 
-    proxied = client.get("/runtime-applications/embedded-demo", follow_redirects=False)
+    proxied = client.get("/runtime-applications/proxy-backed-test", follow_redirects=False)
 
     assert proxied.status_code == 307
     assert proxied.headers["location"] == "http://should-not-be-followed/internal"
@@ -213,13 +239,11 @@ def test_proxy_does_not_follow_redirects(client, monkeypatch) -> None:
 
 
 def test_proxy_rejects_host_service_name_mismatch(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "embedded-demo-application", "branch": "main"})
-    assert deployment.status_code == 200
-    runtime_ref, _ = _active_deployment_payload("embedded-demo-application")
+    runtime_ref = _deploy_proxy_fixture(client)
     runtime_ref["transport"]["host"] = "unexpected-runtime"
-    _set_active_application_runtime_ref("embedded-demo", runtime_ref)
+    _set_active_application_runtime_ref(PROXY_FIXTURE_APP_ID, runtime_ref)
 
-    proxied = client.get("/runtime-applications/embedded-demo")
+    proxied = client.get("/runtime-applications/proxy-backed-test")
 
     assert proxied.status_code == 502
     assert proxied.json()["detail"] == "runtime proxy host must match service_name"

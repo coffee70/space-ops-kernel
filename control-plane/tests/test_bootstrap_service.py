@@ -113,7 +113,7 @@ def test_bootstrap_manifest_sync_creates_commit_when_seed_changes(control_plane_
     assert history[0]["subject"] == "Sync bootstrap manifests from control plane"
 
 
-def test_runtime_bootstrapper_covers_embedded_demo_application() -> None:
+def test_runtime_bootstrapper_excludes_deleted_embedded_demo_application() -> None:
     from app.services.bootstrap_service import BOOTSTRAP_UNITS
 
-    assert "embedded-demo-application" in BOOTSTRAP_UNITS
+    assert "embedded-demo-application" not in BOOTSTRAP_UNITS

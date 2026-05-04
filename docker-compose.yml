@@ -115,29 +115,9 @@ services:
       NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
       API_SERVER_URL: http://platform-api:8000
       CONTROL_PLANE_SERVER_URL: http://control-plane:8100
-      OPENVSCODE_SERVER_URL: http://openvscode-server:3000
     depends_on:
       platform-api:
         condition: service_healthy
-      control-plane:
-        condition: service_healthy
-
-  openvscode-server:
-    image: gitpod/openvscode-server:latest
-    container_name: telemetry-openvscode-server
-    command:
-      - --host
-      - 0.0.0.0
-      - --port
-      - "3000"
-      - --without-connection-token
-      - --server-base-path
-      - /workspace
-      - --workspace-folder
-      - /workspace/project
-    volumes:
-      - ./runtime/managed-fork/worktrees/main/project:/workspace/project
-    depends_on:
       control-plane:
         condition: service_healthy
 

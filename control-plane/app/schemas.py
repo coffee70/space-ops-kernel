@@ -32,7 +32,7 @@ SAFE_IFRAME_ALLOW_TOKENS = {
     "clipboard-write",
     "fullscreen",
 }
-RESERVED_SHELL_ROUTES = {"/api", "/apps", "/platform", "/runtime-applications", "/workspace"}
+RESERVED_SHELL_ROUTES = {"/api", "/apps", "/platform", "/runtime-applications"}
 
 
 def _reject_unsafe_path(value: str | None, *, field_name: str) -> str | None:
