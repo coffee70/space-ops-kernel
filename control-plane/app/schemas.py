@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -159,6 +160,40 @@ class HealthSpec(StrictBaseModel):
     type: Literal["http"]
     path: str
     port: int
+
+
+class VolumeMountSpec(StrictBaseModel):
+    """Host bind mount relative to the Space Ops workspace root."""
+
+    source: str = Field(..., min_length=1, max_length=1024)
+    target: str = Field(..., min_length=1, max_length=1024)
+    read_only: bool = True
+
+    @field_validator("source")
+    @classmethod
+    def validate_source_workspace_relative(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("mount source cannot be empty")
+        path = PurePosixPath(trimmed)
+        if path.is_absolute():
+            raise ValueError("mount source must be relative to workspace_root")
+        if ".." in path.parts:
+            raise ValueError("mount source must not contain '..'")
+        return path.as_posix()
+
+    @field_validator("target")
+    @classmethod
+    def validate_target_container_path(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("mount target cannot be empty")
+        path = PurePosixPath(trimmed)
+        if not path.is_absolute():
+            raise ValueError("mount target must be an absolute container path")
+        if ".." in path.parts:
+            raise ValueError("mount target must not contain '..'")
+        return path.as_posix()
 
 
 class RuntimeTransport(StrictBaseModel):
@@ -381,6 +416,7 @@ class UnitManifest(StrictBaseModel):
     health: HealthSpec
     discovery: dict[str, Any] = Field(default_factory=dict)
     application: ApplicationManifestDefinition | None = None
+    mounts: list[VolumeMountSpec] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "UnitManifest":

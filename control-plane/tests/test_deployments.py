@@ -2,6 +2,107 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+
+def test_phase3_fixture_service_can_scaffold_write_commit_deploy_and_delete(client) -> None:
+    from app.db import get_session_factory
+    from app.models.runtime import Deployment, ManagedUnit
+
+    unit_id = "phase3-test-fixture-service"
+    branch = "feature/phase3-no-llm"
+    main_path = f"project/space-ops-platform/backend/services/{unit_id}/app/main.py"
+    requirements_path = f"project/space-ops-platform/backend/services/{unit_id}/requirements.txt"
+
+    branch_response = client.post("/code/branches", json={"branch": branch, "from_branch": "main"})
+    assert branch_response.status_code == 200
+
+    scaffold_response = client.post(
+        "/templates/python-service/scaffold",
+        json={
+            "branch": branch,
+            "unit_id": unit_id,
+            "display_name": "Phase 3 Test Fixture Service",
+            "package_owner": "space-ops-platform",
+            "source_path": f"project/space-ops-platform/backend/services/{unit_id}",
+            "discovery": {
+                "service_slug": unit_id,
+                "capabilities": ["phase3-test-fixture"],
+                "health_endpoint": "/health",
+            },
+        },
+    )
+    assert scaffold_response.status_code == 200
+
+    requirements_response = client.put(
+        "/code/file",
+        json={
+            "branch": branch,
+            "path": requirements_path,
+            "content": "fastapi>=0.109\nuvicorn[standard]>=0.27\n",
+        },
+    )
+    assert requirements_response.status_code == 200
+
+    main_response = client.put(
+        "/code/file",
+        json={
+            "branch": branch,
+            "path": main_path,
+            "content": (
+                "from fastapi import FastAPI\n"
+                "app = FastAPI()\n"
+                "@app.get('/health')\n"
+                "def health():\n"
+                "    return {'status': 'ok', 'service': 'phase3-test-fixture-service'}\n"
+                "@app.get('/metadata')\n"
+                "def metadata():\n"
+                "    return {'display_name': 'Phase 3 Test Fixture Service', 'mode': 'deterministic'}\n"
+            ),
+        },
+    )
+    assert main_response.status_code == 200
+
+    commit_response = client.post(
+        "/code/commits",
+        json={"branch": branch, "message": "Add deterministic Phase 3 fixture service"},
+    )
+    assert commit_response.status_code == 200
+
+    deploy_response = client.post("/deployments", json={"unit_id": unit_id, "branch": branch})
+    assert deploy_response.status_code == 200
+    deployment_payload = deploy_response.json()
+    assert deployment_payload["status"] == "healthy"
+    assert deployment_payload["registered"] is True
+
+    registry = client.get("/registry/services")
+    assert registry.status_code == 200
+    service = next(item for item in registry.json() if item["unitId"] == unit_id)
+    assert service["serviceSlug"] == unit_id
+    assert service["deploymentStatus"] == "healthy"
+    assert service["healthStatus"] == "passing"
+
+    with get_session_factory()() as session:
+        unit = session.get(ManagedUnit, unit_id)
+        deployment = session.get(Deployment, deployment_payload["deployment_id"])
+        assert unit is not None
+        assert deployment is not None
+        assert unit.delete_eligible is True
+        assert deployment.delete_eligible is True
+        assert deployment.runtime_ref is not None
+        assert deployment.runtime_ref["health"]["path"] == "/health"
+
+    delete_response = client.post("/internal/delete/managed-units", json={"unit_id": unit_id})
+    assert delete_response.status_code == 200
+    delete_payload = delete_response.json()
+    assert any(item["resource_type"] == "managed_unit" and item["resource_id"] == unit_id for item in delete_payload["deleted"])
+    assert client.get(f"/registry/services/{unit_id}").status_code == 404
+    assert client.get(f"/internal/runtime-services/{unit_id}/health").status_code == 404
+
+    repeat_delete = client.post("/internal/delete/managed-units", json={"unit_id": unit_id})
+    assert repeat_delete.status_code == 200
+    assert any(item["resource_type"] == "managed_unit" and item["resource_id"] == unit_id for item in repeat_delete.json()["already_absent"])
+
 
 def test_successful_deployment_updates_registry(client) -> None:
     from app.db import get_session_factory
@@ -197,6 +298,183 @@ def test_deployment_compose_uses_unit_source_root(control_plane_env: Path) -> No
 
     assert service["build"]["context"].endswith("/project/space-ops-apps/applications/embedded-demo-application")
     assert service["build"]["dockerfile"] == "Dockerfile"
+
+
+def test_platform_node_service_deployment_uses_nested_source_root(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    unit_root = source_root / "project" / "space-ops-platform" / "backend" / "services" / "agent-runtime-service"
+    unit_root.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(get_settings(), object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="agent-runtime-service",
+            display_name="Agent Runtime Service",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="node-service",
+            source_path="project/space-ops-platform/backend/services/agent-runtime-service",
+            build=BuildSpec(command="npm install && npm run build"),
+            run=RunSpec(command="node dist/server.js"),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "agent-runtime-service"},
+        ),
+        source_root=source_root,
+        service_name="agent-runtime-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    service = next(iter(payload["services"].values()))
+
+    assert service["build"]["context"].endswith("/project/space-ops-platform/backend/services/agent-runtime-service")
+    assert service["build"]["dockerfile"] == "Dockerfile"
+    assert service["command"] == "node dist/server.js"
+
+
+def test_vehicle_config_service_compose_mounts_apps_vehicle_configurations(
+    control_plane_env: Path,
+) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest, VolumeMountSpec
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    unit_root = source_root / "project" / "space-ops-platform"
+    unit_root.mkdir(parents=True, exist_ok=True)
+    host_bundle = settings.workspace_root / "space-ops-apps" / "vehicle-configurations"
+    host_bundle.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(settings, object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="vehicle-config-service",
+            display_name="Vehicle Config Service",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="python-service",
+            source_path="project/space-ops-platform",
+            build=BuildSpec(command="pip install -r requirements.txt"),
+            run=RunSpec(
+                command=(
+                    "sh -c \"cd /app/platform/backend && uvicorn main:app "
+                    "--app-dir services/vehicle-config-service --host 0.0.0.0 --port 8080\""
+                )
+            ),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "vehicle-config-service"},
+            mounts=[
+                VolumeMountSpec(
+                    source="space-ops-apps/vehicle-configurations",
+                    target="/app/vehicle-configurations",
+                    read_only=True,
+                )
+            ],
+        ),
+        source_root=source_root,
+        service_name="vehicle-config-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview-vc.env",
+    )
+    spec = next(iter(payload["services"].values()))
+    assert "volumes" in spec
+    assert len(spec["volumes"]) == 1
+    assert spec["volumes"][0].endswith(":/app/vehicle-configurations:ro")
+    assert not spec["volumes"][0].startswith("/")
+    assert "vehicle-configurations" in spec["volumes"][0]
+
+
+def test_compose_mount_omitted_when_host_directory_missing(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest, VolumeMountSpec
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-platform").mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(settings, object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="vehicle-config-service",
+            display_name="Vehicle Config Service",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="python-service",
+            source_path="project/space-ops-platform",
+            build=BuildSpec(command="pip install -r requirements.txt"),
+            run=RunSpec(command="uvicorn app:app --host 0.0.0.0 --port 8080"),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "vehicle-config-service"},
+            mounts=[
+                VolumeMountSpec(
+                    source="space-ops-apps/__missing_volume_dir__",
+                    target="/app/data",
+                    read_only=True,
+                )
+            ],
+        ),
+        source_root=source_root,
+        service_name="vehicle-config-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview-vc.env",
+    )
+    spec = next(iter(payload["services"].values()))
+    assert "volumes" not in spec
+
+
+def test_compose_mount_read_write_uses_rw_suffix(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest, VolumeMountSpec
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-platform").mkdir(parents=True, exist_ok=True)
+    data_dir = settings.workspace_root / "space-ops-apps" / "rw-mount-fixture"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(settings, object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="fixture-service",
+            display_name="Fixture",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="python-service",
+            source_path="project/space-ops-platform",
+            build=BuildSpec(command="pip install -r requirements.txt"),
+            run=RunSpec(command="uvicorn app:app --host 0.0.0.0 --port 8080"),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "fixture-service"},
+            mounts=[
+                VolumeMountSpec(
+                    source="space-ops-apps/rw-mount-fixture",
+                    target="/app/writable",
+                    read_only=False,
+                )
+            ],
+        ),
+        source_root=source_root,
+        service_name="fixture-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview-rw.env",
+    )
+    spec = next(iter(payload["services"].values()))
+    assert "volumes" in spec
+    assert len(spec["volumes"]) == 1
+    assert spec["volumes"][0].endswith(":/app/writable:rw")
+    assert not spec["volumes"][0].startswith("/")
+    assert "rw-mount-fixture" in spec["volumes"][0]
+
+
+def test_volume_mount_spec_rejects_traversal_source() -> None:
+    from pydantic import ValidationError
+
+    from app.schemas import VolumeMountSpec
+
+    with pytest.raises(ValidationError):
+        VolumeMountSpec(source="space-ops-apps/../etc", target="/app/x", read_only=True)
 
 
 def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:

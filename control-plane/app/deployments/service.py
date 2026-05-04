@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -35,10 +36,10 @@ class DeploymentService:
         self.session = session
         self.registry = RegistryService(session)
 
-    def submit(self, request: DeploymentSubmissionRequest) -> DeploymentRecordResponse:
+    def submit(self, request: DeploymentSubmissionRequest, *, delete_eligible: bool = True) -> DeploymentRecordResponse:
         branch = request.branch
         commit_sha = self.repository.resolve_commit(branch, request.commit_sha)
-        deployment = self.registry.create_deployment(request.unit_id, branch, commit_sha)
+        deployment = self.registry.create_deployment(request.unit_id, branch, commit_sha, delete_eligible=delete_eligible)
         logs_path = self.settings.deployment_logs_root / f"{deployment.deployment_id}.log"
         logs_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -271,19 +272,42 @@ class DeploymentService:
         except ValueError as exc:
             raise ValueError(f"deployment source path escapes exported commit: {manifest.source_path}") from exc
 
-        payload = {
-            "services": {
-                service_name: {
-                    "build": {
-                        "context": str(self._build_context_path(manifest, source_root)),
-                        "dockerfile": self._build_dockerfile_path(manifest),
-                    },
-                    "command": manifest.run.command,
-                    "environment": self._build_runtime_env(manifest, service_name),
-                }
-            }
+        service_spec: dict[str, Any] = {
+            "build": {
+                "context": str(self._build_context_path(manifest, source_root)),
+                "dockerfile": self._build_dockerfile_path(manifest),
+            },
+            "command": manifest.run.command,
+            "environment": self._build_runtime_env(manifest, service_name),
         }
+        volume_entries = self._compose_volume_entries(manifest)
+        if volume_entries:
+            service_spec["volumes"] = volume_entries
+
+        payload = {"services": {service_name: service_spec}}
         return payload
+
+    def _compose_volume_entries(self, manifest: UnitManifest) -> list[str]:
+        """Bind-mount declared host paths into the service (paths relative to generated compose dir)."""
+
+        workspace_root = self.settings.workspace_root.resolve()
+        compose_dir = self.settings.generated_compose_root
+        compose_dir.mkdir(parents=True, exist_ok=True)
+        compose_resolved = compose_dir.resolve()
+
+        entries: list[str] = []
+        for mount in manifest.mounts:
+            host_path = (workspace_root / mount.source).resolve()
+            try:
+                host_path.relative_to(workspace_root)
+            except ValueError as exc:
+                raise ValueError(f"mount source resolves outside workspace_root: {mount.source}") from exc
+            if not host_path.is_dir():
+                continue
+            rel_host = Path(os.path.relpath(str(host_path), str(compose_resolved))).as_posix()
+            mode = "ro" if mount.read_only else "rw"
+            entries.append(f"{rel_host}:{mount.target}:{mode}")
+        return entries
 
     def _build_context_path(self, manifest: UnitManifest, source_root: Path) -> Path:
         if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":

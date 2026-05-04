@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+import app.config
 from app.db import get_db
 from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/deployments", tags=["deployments"])
 
 
 def get_deployment_service(session: Session = Depends(get_db)) -> DeploymentService:
-    settings = get_settings()
+    settings = app.config.get_settings()
     return DeploymentService(settings, ManagedGitRepository(settings), session)
 
 
@@ -61,5 +61,5 @@ def get_logs(deployment_id: str, session: Session = Depends(get_db)) -> dict:
     deployment = registry.get_deployment(deployment_id)
     if deployment is None:
         raise HTTPException(status_code=404, detail="deployment not found")
-    settings = get_settings()
+    settings = app.config.get_settings()
     return {"deployment_id": deployment_id, "logs": registry.read_logs(settings.deployment_logs_root, deployment_id)}

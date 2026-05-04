@@ -41,15 +41,15 @@ class TemplateService:
         if (worktree / manifest_path).exists():
             raise ValueError(f"unit_id {request.unit_id} already exists")
 
-        source_path = Path(request.source_path or self._default_source_path(template_id, request.unit_id))
-        self.repository.normalize_code_path(source_path.as_posix())
-        if (worktree / source_path).exists():
-            raise ValueError(f"source_path {source_path.as_posix()} already exists")
-
         allowed_owners = template["allowed_package_owners"]
         package_owner = request.package_owner or allowed_owners[0]
         if package_owner not in allowed_owners:
             raise ValueError(f"package_owner must be one of {allowed_owners}")
+
+        source_path = Path(request.source_path or self._default_source_path(template_id, request.unit_id, package_owner))
+        self.repository.normalize_code_path(source_path.as_posix())
+        if (worktree / source_path).exists():
+            raise ValueError(f"source_path {source_path.as_posix()} already exists")
 
         route_slug = request.discovery.get("application_id") or request.discovery.get("route_slug") or request.unit_id
         replacements = {
@@ -70,7 +70,7 @@ class TemplateService:
         changed_files: list[str] = []
         files_root = self.templates_root / template_id / "files"
         for source_file in sorted(files_root.rglob("*")):
-            if source_file.is_dir():
+            if source_file.is_dir() or "__pycache__" in source_file.parts or source_file.suffix == ".pyc":
                 continue
             relative = source_file.relative_to(files_root)
             rendered_relative = self._render_template_string(relative.as_posix(), replacements)
@@ -108,10 +108,12 @@ class TemplateService:
             "manifest": manifest.model_dump(),
         }
 
-    def _default_source_path(self, template_id: str, unit_id: str) -> str:
+    def _default_source_path(self, template_id: str, unit_id: str, package_owner: str) -> str:
         if template_id == "python-service":
             return f"project/space-ops-platform/backend/services/{unit_id}"
         if template_id == "node-service":
+            if package_owner == "space-ops-platform":
+                return f"project/space-ops-platform/backend/services/{unit_id}"
             return f"project/space-ops-apps/services/{unit_id}"
         if template_id in {"frontend-native-application", "frontend-embedded-application"}:
             return f"project/space-ops-apps/applications/{unit_id}"
@@ -132,9 +134,11 @@ class TemplateService:
         if template_id in {"frontend-native-application", "frontend-embedded-application", "frontend-shell"}:
             return {}
         return {
+            "service_slug": discovery.get("service_slug") or replacements["unit_id"],
             "category": replacements["category"],
             "api_base_path": replacements["api_base_path"],
             "capability_tags": discovery.get("capability_tags") or [],
+            "capabilities": discovery.get("capabilities") or discovery.get("capability_tags") or [],
             "health_endpoint": discovery.get("health_endpoint") or replacements.get("health_path", "/health"),
         }
 

@@ -17,6 +17,7 @@ from app.models.runtime import (
     ApplicationDeployment,
     Deployment,
     DeploymentEvent,
+    ManagedBranch,
     ManagedUnit,
     UnitHealthSnapshot,
 )
@@ -76,7 +77,7 @@ class RegistryService:
         )
         self.session.flush()
 
-    def create_deployment(self, unit_id: str, branch: str, commit_sha: str) -> Deployment:
+    def create_deployment(self, unit_id: str, branch: str, commit_sha: str, *, delete_eligible: bool = True) -> Deployment:
         unit = self.session.get(ManagedUnit, unit_id)
         if unit is None:
             unit = ManagedUnit(
@@ -89,12 +90,25 @@ class RegistryService:
                 deployment_status="pending",
                 health_status="unknown",
                 discovery_metadata_json={},
+                delete_eligible=delete_eligible,
             )
             self.session.add(unit)
             self.session.flush()
-        deployment = Deployment(unit_id=unit_id, branch=branch, commit_sha=commit_sha, status="pending", health_status="unknown")
+        deployment = Deployment(
+            unit_id=unit_id,
+            branch=branch,
+            commit_sha=commit_sha,
+            status="pending",
+            health_status="unknown",
+            delete_eligible=delete_eligible,
+        )
         self.session.add(deployment)
         self.session.flush()
+        branch_record = self.session.query(ManagedBranch).filter(ManagedBranch.branch_name == branch).one_or_none()
+        if branch_record is not None and branch_record.delete_eligible:
+            branch_record.associated_unit_id = unit_id
+            branch_record.associated_deployment_id = deployment.deployment_id
+            branch_record.updated_at = utcnow()
         self.record_event(deployment.deployment_id, "requested", "Deployment requested")
         return deployment
 
@@ -183,7 +197,7 @@ class RegistryService:
                 previous_deployment.status = "replaced"
 
         if manifest.runtime_kind == "frontend_application" and manifest.application is not None:
-            self.upsert_application(
+            application = self.upsert_application(
                 PlatformApplicationDefinition.model_validate(
                     {
                         "applicationId": manifest.application.application_id,
@@ -211,6 +225,7 @@ class RegistryService:
                 audit_event="deployment_activation",
                 audit_message="Application deployment activated",
             )
+            application.delete_eligible = managed_unit.delete_eligible or deployment.delete_eligible
             self._record_application_deployment(
                 application_id=manifest.application.application_id,
                 deployment_id=deployment.deployment_id,
@@ -219,6 +234,7 @@ class RegistryService:
                 runtime_ref=runtime_ref,
                 status="healthy",
                 health_status="passing",
+                delete_eligible=managed_unit.delete_eligible or deployment.delete_eligible,
             )
 
         self.session.flush()
@@ -414,6 +430,7 @@ class RegistryService:
         runtime_ref: dict[str, Any],
         status: str,
         health_status: str,
+        delete_eligible: bool = True,
     ) -> None:
         previous = self.get_active_application_deployment(application_id)
         if previous is not None and previous.deployment_id != deployment_id:
@@ -430,6 +447,7 @@ class RegistryService:
                 runtime_ref=runtime_ref,
                 status=status,
                 health_status=health_status,
+                delete_eligible=delete_eligible,
             )
             self.session.add(row)
         else:
@@ -439,6 +457,7 @@ class RegistryService:
             row.runtime_ref = runtime_ref
             row.status = status
             row.health_status = health_status
+            row.delete_eligible = delete_eligible
             row.updated_at = utcnow()
         self.session.flush()
 

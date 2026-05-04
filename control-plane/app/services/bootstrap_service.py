@@ -41,6 +41,12 @@ BOOTSTRAP_UNITS = (
     "telemetry-query-service",
     "telemetry-intelligence-service",
     "ops-events-service",
+    "document-knowledge-service",
+    "tool-registry-service",
+    "tool-execution-service",
+    "code-intelligence-service",
+    "context-retrieval-service",
+    "agent-runtime-service",
     "platform-api-gateway",
     "derived-telemetry-service",
     "embedded-demo-application",
@@ -225,12 +231,19 @@ class RuntimeBootstrapper:
             for unit_id in BOOTSTRAP_UNITS:
                 if self._deployment_is_current(registry, deployment_service, unit_id, commit_sha):
                     continue
+                if not self._bootstrap_source_exists(deployment_service, unit_id, commit_sha):
+                    continue
                 result = deployment_service.submit(
-                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha)
+                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
+                    delete_eligible=False,
                 )
                 session.commit()
                 if result.status != "healthy":
                     raise RuntimeError(f"failed to bootstrap {unit_id}: {result.failure_reason or result.status}")
+
+    def _bootstrap_source_exists(self, deployment_service: DeploymentService, unit_id: str, commit_sha: str) -> bool:
+        manifest = deployment_service._load_manifest(commit_sha, unit_id)
+        return (self.settings.main_worktree_dir / manifest.source_path).exists()
 
     def _deployment_is_current(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import tarfile
 from pathlib import Path, PurePosixPath
 
@@ -162,6 +163,30 @@ class ManagedGitRepository:
                 ["git", f"--git-dir={self.settings.bare_repo_dir}", "rev-parse", commit_sha]
             ).stdout.strip()
         return self.get_head_commit(branch)
+
+    def delete_branch_and_worktree(self, branch: str, worktree_path: Path) -> dict[str, bool]:
+        if branch == "main":
+            raise ValueError("main branch cannot be deleted")
+
+        result = {"worktree_removed": False, "branch_removed": False}
+        worktree = worktree_path.resolve()
+        worktrees_root = self.settings.branch_worktrees_dir.resolve()
+        try:
+            worktree.relative_to(worktrees_root)
+        except ValueError as exc:
+            raise ValueError("worktree path is outside managed branch worktrees") from exc
+
+        if worktree.exists():
+            run_command(["git", f"--git-dir={self.settings.bare_repo_dir}", "worktree", "remove", "--force", str(worktree)])
+            if worktree.exists():
+                shutil.rmtree(worktree)
+            result["worktree_removed"] = True
+        run_command(["git", f"--git-dir={self.settings.bare_repo_dir}", "worktree", "prune"])
+
+        if branch in self.list_branches():
+            run_command(["git", f"--git-dir={self.settings.bare_repo_dir}", "branch", "-D", branch])
+            result["branch_removed"] = True
+        return result
 
     def materialize_commit(self, commit_sha: str, target_dir: Path) -> None:
         target_dir.mkdir(parents=True, exist_ok=True)

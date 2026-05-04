@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import yaml
 
 
@@ -35,8 +33,7 @@ def test_template_catalog_and_scaffold(client) -> None:
     assert "manifests/units/thermal-balance-application.yaml" in payload["changed_files"]
     assert "project/space-ops-apps/applications/thermal-balance-application/server.js" in payload["changed_files"]
 
-    workspace = Path(client.get("/health").json()["workspace_root"]).parent
-    manifest = yaml.safe_load((workspace / "manifests/units/thermal-balance-application.yaml").read_text(encoding="utf-8"))
+    manifest = payload["data"]["manifest"]
     assert manifest["runtime_template"] == "frontend-embedded-application"
     assert manifest["application"]["application_id"] == "thermal-balance"
     assert manifest["application"]["route_path"] == "/apps/thermal-balance"
@@ -54,6 +51,57 @@ def test_duplicate_unit_id_rejected(client) -> None:
     )
     assert response.status_code == 400
     assert "already exists" in response.json()["detail"]
+
+
+def test_scaffolded_service_manifest_includes_service_slug(client) -> None:
+    response = client.post(
+        "/templates/python-service/scaffold",
+        json={
+            "branch": "main",
+            "unit_id": "ai-safety-service",
+            "display_name": "AI Safety Service",
+            "package_owner": "space-ops-platform",
+        },
+    )
+    assert response.status_code == 200
+
+    file_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": "manifests/units/ai-safety-service.yaml"},
+    )
+    assert file_response.status_code == 200
+    manifest = yaml.safe_load(file_response.json()["data"]["content"])
+    assert manifest["discovery"]["service_slug"] == "ai-safety-service"
+    assert manifest["discovery"]["capabilities"] == []
+
+    dockerfile_response = client.get(
+        "/code/file",
+        params={"branch": "main", "path": "project/space-ops-platform/backend/services/ai-safety-service/Dockerfile"},
+    )
+    assert dockerfile_response.status_code == 200
+    dockerfile = dockerfile_response.json()["data"]["content"]
+    assert "COPY . /app" in dockerfile
+    assert "COPY project/space-ops-platform" not in dockerfile
+
+
+def test_node_service_scaffold_uses_platform_default_path_for_platform_owner(client) -> None:
+    response = client.post(
+        "/templates/node-service/scaffold",
+        json={
+            "branch": "main",
+            "unit_id": "ops-assistant-service",
+            "display_name": "Agent Runtime Service",
+            "package_owner": "space-ops-platform",
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    manifest = payload["data"]["manifest"]
+    changed_files = payload["changed_files"]
+    assert manifest["package_owner"] == "space-ops-platform"
+    assert manifest["source_path"] == "project/space-ops-platform/backend/services/ops-assistant-service"
+    assert "project/space-ops-platform/backend/services/ops-assistant-service/.gitignore" in changed_files
 
 
 def test_template_request_does_not_reimport_seed_source(client, control_plane_env) -> None:

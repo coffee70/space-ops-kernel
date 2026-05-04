@@ -33,6 +33,7 @@ class ManagedUnit(Base):
     deployment_status: Mapped[str] = mapped_column(String(64), nullable=False, default="inactive")
     health_status: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     discovery_metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    delete_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
@@ -55,6 +56,7 @@ class Deployment(Base):
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     artifact_ref: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     runtime_ref: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    delete_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class DeploymentEvent(Base):
@@ -135,6 +137,7 @@ class Application(Base):
     owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
     health_status: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     deployment_status: Mapped[str] = mapped_column(String(64), nullable=False, default="seeded")
+    delete_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
@@ -167,6 +170,7 @@ class ApplicationDeployment(Base):
     runtime_ref: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     health_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    delete_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
@@ -185,4 +189,48 @@ class ApplicationAuditEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     details_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class ManagedBranch(Base):
+    """Authoritative record for branches created by managed fork APIs."""
+
+    __tablename__ = "managed_branches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    branch_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    repository_root: Mapped[str] = mapped_column(String(1024), nullable=False)
+    worktree_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    base_branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    base_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by_tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by_conversation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    associated_unit_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    associated_deployment_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    delete_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ResourceDeleteEvent(Base):
+    """Durable audit stream for managed resource hard-delete operations."""
+
+    __tablename__ = "resource_delete_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    delete_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    operation: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
