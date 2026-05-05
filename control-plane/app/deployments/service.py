@@ -248,12 +248,17 @@ class DeploymentService:
                     "VEHICLE_CONFIG_ROOT": self.settings.platform_vehicle_config_root,
                     "CONTROL_PLANE_URL": self.settings.platform_control_plane_url,
                     "NATS_URL": self.settings.platform_nats_url,
-                    "SATNOGS_API_TOKEN": self.settings.platform_satnogs_api_token,
-                    "SATNOGS_LIVE_ENABLED": self.settings.platform_satnogs_live_enabled,
-                    "SATNOGS_ADAPTER_CONFIG": self.settings.platform_satnogs_adapter_config,
-                    "SATNOGS_DLQ_ROOT": self.settings.platform_satnogs_dlq_root,
                 }
             )
+            if manifest.unit_id == "satnogs-adapter-service":
+                env.update(
+                    {
+                        "SATNOGS_API_TOKEN": self.settings.platform_satnogs_api_token,
+                        "SATNOGS_LIVE_ENABLED": self.settings.platform_satnogs_live_enabled,
+                        "SATNOGS_ADAPTER_CONFIG": self.settings.platform_satnogs_adapter_config,
+                        "SATNOGS_DLQ_ROOT": self.settings.platform_satnogs_dlq_root,
+                    }
+                )
         if manifest.runtime_kind == "frontend_application" and manifest.application:
             env["APPLICATION_ID"] = manifest.application.application_id
             if manifest.application.proxy_base_path:

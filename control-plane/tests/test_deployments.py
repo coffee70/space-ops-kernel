@@ -499,6 +499,40 @@ def test_volume_mount_spec_rejects_traversal_source() -> None:
         VolumeMountSpec(source="space-ops-apps/../etc", target="/app/x", read_only=True)
 
 
+def test_satnogs_env_only_injected_for_satnogs_adapter_service(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    settings = get_settings()
+    service = DeploymentService(settings, object(), object())
+    common_manifest = UnitManifest(
+        unit_id="telemetry-ingest-service",
+        display_name="Telemetry Ingest Service",
+        package_owner="space-ops-platform",
+        runtime_kind="service",
+        runtime_template="python-service",
+        source_path="project/space-ops-platform",
+        build=BuildSpec(command="pip install -r requirements.txt"),
+        run=RunSpec(command="uvicorn main:app"),
+        health=HealthSpec(type="http", path="/health", port=8080),
+        discovery={"service_slug": "telemetry-ingest-service"},
+    )
+    adapter_manifest = common_manifest.model_copy(update={"unit_id": "satnogs-adapter-service"})
+
+    common_env = service._build_runtime_env(common_manifest, "telemetry-ingest-service-dep-test")
+    adapter_env = service._build_runtime_env(adapter_manifest, "satnogs-adapter-service-dep-test")
+
+    assert "SATNOGS_API_TOKEN" not in common_env
+    assert "SATNOGS_LIVE_ENABLED" not in common_env
+    assert "SATNOGS_ADAPTER_CONFIG" not in common_env
+    assert "SATNOGS_DLQ_ROOT" not in common_env
+    assert adapter_env["SATNOGS_API_TOKEN"] == settings.platform_satnogs_api_token
+    assert adapter_env["SATNOGS_LIVE_ENABLED"] == settings.platform_satnogs_live_enabled
+    assert adapter_env["SATNOGS_ADAPTER_CONFIG"] == settings.platform_satnogs_adapter_config
+    assert adapter_env["SATNOGS_DLQ_ROOT"] == settings.platform_satnogs_dlq_root
+
+
 def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:
     from app.config import get_settings
     from app.deployments.service import DeploymentService

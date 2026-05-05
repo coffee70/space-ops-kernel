@@ -12,7 +12,7 @@ These three repositories assume a sibling directory layout (`space-ops-kernel`, 
 |------|--------|---------------------|
 | **This repo — Compose, bootstrap, validation scripts** | this file | [AGENTS.md](./AGENTS.md) |
 | **Layer 2 — platform APIs, backend pytest, agent-runtime service** | [../space-ops-platform/README.md](../space-ops-platform/README.md) | [../space-ops-platform/AGENTS.md](../space-ops-platform/AGENTS.md) |
-| **Layer 3 — Mission Control UI, apps, Playwright workspace, simulator, adapter** | [../space-ops-apps/README.md](../space-ops-apps/README.md) | [../space-ops-apps/AGENTS.md](../space-ops-apps/AGENTS.md) |
+| **Layer 3 — Mission Control UI, apps, Playwright workspace, simulator** | [../space-ops-apps/README.md](../space-ops-apps/README.md) | [../space-ops-apps/AGENTS.md](../space-ops-apps/AGENTS.md) |
 | Playwright tooling details | [../space-ops-apps/tools/playwright/README.md](../space-ops-apps/tools/playwright/README.md) | — |
 
 ## Role
