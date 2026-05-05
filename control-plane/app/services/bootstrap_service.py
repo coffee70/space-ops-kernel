@@ -37,6 +37,8 @@ BOOTSTRAP_UNITS = (
     "source-registry-service",
     "telemetry-ingest-service",
     "satnogs-adapter-service",
+    "simulator-service",
+    "simulator-2-service",
     "position-orbit-service",
     "simulator-control-service",
     "telemetry-query-service",

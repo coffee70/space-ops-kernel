@@ -356,7 +356,7 @@ def test_platform_node_service_deployment_uses_nested_source_root(control_plane_
     assert service["command"] == "node dist/server.js"
 
 
-def test_vehicle_config_service_compose_mounts_apps_vehicle_configurations(
+def test_compose_mounts_platform_vehicle_configurations(
     control_plane_env: Path,
 ) -> None:
     from app.config import get_settings
@@ -367,7 +367,7 @@ def test_vehicle_config_service_compose_mounts_apps_vehicle_configurations(
     source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
     unit_root = source_root / "project" / "space-ops-platform"
     unit_root.mkdir(parents=True, exist_ok=True)
-    host_bundle = settings.workspace_root / "space-ops-apps" / "vehicle-configurations"
+    host_bundle = settings.workspace_root / "space-ops-platform" / "backend" / "resources" / "vehicle-configurations"
     host_bundle.mkdir(parents=True, exist_ok=True)
 
     service = DeploymentService(settings, object(), object())
@@ -390,8 +390,8 @@ def test_vehicle_config_service_compose_mounts_apps_vehicle_configurations(
             discovery={"service_slug": "vehicle-config-service"},
             mounts=[
                 VolumeMountSpec(
-                    source="space-ops-apps/vehicle-configurations",
-                    target="/app/vehicle-configurations",
+                    source="space-ops-platform/backend/resources/vehicle-configurations",
+                    target="/app/platform/backend/resources/vehicle-configurations",
                     read_only=True,
                 )
             ],
@@ -403,7 +403,7 @@ def test_vehicle_config_service_compose_mounts_apps_vehicle_configurations(
     spec = next(iter(payload["services"].values()))
     assert "volumes" in spec
     assert len(spec["volumes"]) == 1
-    assert spec["volumes"][0].endswith(":/app/vehicle-configurations:ro")
+    assert spec["volumes"][0].endswith(":/app/platform/backend/resources/vehicle-configurations:ro")
     assert not spec["volumes"][0].startswith("/")
     assert "vehicle-configurations" in spec["volumes"][0]
 
@@ -519,9 +519,13 @@ def test_satnogs_env_only_injected_for_satnogs_adapter_service(control_plane_env
         discovery={"service_slug": "telemetry-ingest-service"},
     )
     adapter_manifest = common_manifest.model_copy(update={"unit_id": "satnogs-adapter-service"})
+    simulator_manifest = common_manifest.model_copy(update={"unit_id": "simulator-service"})
+    simulator_2_manifest = common_manifest.model_copy(update={"unit_id": "simulator-2-service"})
 
     common_env = service._build_runtime_env(common_manifest, "telemetry-ingest-service-dep-test")
     adapter_env = service._build_runtime_env(adapter_manifest, "satnogs-adapter-service-dep-test")
+    simulator_env = service._build_runtime_env(simulator_manifest, "simulator-service-dep-test")
+    simulator_2_env = service._build_runtime_env(simulator_2_manifest, "simulator-2-service-dep-test")
 
     assert "SATNOGS_API_TOKEN" not in common_env
     assert "SATNOGS_LIVE_ENABLED" not in common_env
@@ -531,6 +535,12 @@ def test_satnogs_env_only_injected_for_satnogs_adapter_service(control_plane_env
     assert adapter_env["SATNOGS_LIVE_ENABLED"] == settings.platform_satnogs_live_enabled
     assert adapter_env["SATNOGS_ADAPTER_CONFIG"] == settings.platform_satnogs_adapter_config
     assert adapter_env["SATNOGS_DLQ_ROOT"] == settings.platform_satnogs_dlq_root
+    assert "VEHICLE_CONFIG_PATH" not in common_env
+    assert "BACKEND_URL" not in common_env
+    assert simulator_env["BACKEND_URL"] == settings.platform_api_base_url
+    assert simulator_env["VEHICLE_CONFIG_PATH"] == "simulators/drogonsat.yaml"
+    assert simulator_2_env["BACKEND_URL"] == settings.platform_api_base_url
+    assert simulator_2_env["VEHICLE_CONFIG_PATH"] == "simulators/rhaegalsat.json"
 
 
 def test_stub_runtime_ref_is_structured(control_plane_env: Path) -> None:

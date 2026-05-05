@@ -259,6 +259,12 @@ class DeploymentService:
                         "SATNOGS_DLQ_ROOT": self.settings.platform_satnogs_dlq_root,
                     }
                 )
+            if manifest.unit_id in {"simulator-service", "simulator-2-service"}:
+                env["BACKEND_URL"] = self.settings.platform_api_base_url
+                if manifest.unit_id == "simulator-service":
+                    env["VEHICLE_CONFIG_PATH"] = "simulators/drogonsat.yaml"
+                elif manifest.unit_id == "simulator-2-service":
+                    env["VEHICLE_CONFIG_PATH"] = "simulators/rhaegalsat.json"
         if manifest.runtime_kind == "frontend_application" and manifest.application:
             env["APPLICATION_ID"] = manifest.application.application_id
             if manifest.application.proxy_base_path:

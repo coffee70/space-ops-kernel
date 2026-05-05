@@ -127,41 +127,5 @@ services:
       control-plane:
         condition: service_healthy
 
-  simulator:
-    build:
-      context: ../space-ops-apps/simulator
-      dockerfile: Dockerfile
-    container_name: telemetry-simulator
-    ports:
-      - "8001:8001"
-    environment:
-      BACKEND_URL: http://platform-api:8000
-      VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
-      VEHICLE_CONFIG_PATH: simulators/drogonsat.yaml
-    volumes:
-      - ../space-ops-apps/telemetry_catalog:/app/telemetry_catalog:ro
-      - ../space-ops-apps/vehicle-configurations:/app/vehicle-configurations:ro
-    depends_on:
-      platform-api:
-        condition: service_healthy
-
-  simulator2:
-    build:
-      context: ../space-ops-apps/simulator
-      dockerfile: Dockerfile
-    container_name: telemetry-simulator-2
-    ports:
-      - "8002:8001"
-    environment:
-      BACKEND_URL: http://platform-api:8000
-      VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
-      VEHICLE_CONFIG_PATH: simulators/rhaegalsat.json
-    volumes:
-      - ../space-ops-apps/telemetry_catalog:/app/telemetry_catalog:ro
-      - ../space-ops-apps/vehicle-configurations:/app/vehicle-configurations:ro
-    depends_on:
-      platform-api:
-        condition: service_healthy
-
 volumes:
   postgres_data:
