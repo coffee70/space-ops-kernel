@@ -14,7 +14,7 @@ If you touch tests, Compose, URLs, or anything that crosses services, skim all t
 
 Keep changes scoped to runtime orchestration: Compose services, environment wiring, health/dependency ordering, ports, volumes, and database bootstrap SQL.
 
-Do not add telemetry business logic, FastAPI route code, database schema definitions, frontend code, simulator code, adapter code, or concrete vehicle configuration assets here. Those belong to sibling Layer 2 and Layer 3 repositories.
+Do not add telemetry business logic, FastAPI route code, database schema definitions, frontend code, simulator code, adapter code, or concrete vehicle configuration assets here. Adapter code and operational vehicle resources belong to Layer 2; apps and simulator code belong to Layer 3.
 
 ## How to run tests (canonical)
 

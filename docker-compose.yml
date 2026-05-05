@@ -39,7 +39,7 @@ services:
       DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
+      VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
       CONTROL_PLANE_URL: http://control-plane:8100
       NATS_URL: nats://nats:4222
       CORS_ORIGIN_REGEX: "^http://[^/]+:3000$"
@@ -77,8 +77,14 @@ services:
       PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PLATFORM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      PLATFORM_API_BASE_URL: http://platform-api:8000
       PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100
       PLATFORM_NATS_URL: nats://nats:4222
+      PLATFORM_VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
+      PLATFORM_SATNOGS_API_TOKEN: ${SATNOGS_API_TOKEN:-}
+      PLATFORM_SATNOGS_LIVE_ENABLED: ${SATNOGS_LIVE_ENABLED:-false}
+      PLATFORM_SATNOGS_ADAPTER_CONFIG: app/adapters/satnogs/config.example.yaml
+      PLATFORM_SATNOGS_DLQ_ROOT: /app/runtime/satnogs-adapter/dlq
     volumes:
       - ./:/app/kernel
       - ../space-ops-platform:/imports/space-ops-platform:ro
@@ -92,7 +98,7 @@ services:
         ]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 90
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,21 +156,6 @@ services:
       BACKEND_URL: http://platform-api:8000
       VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
       VEHICLE_CONFIG_PATH: simulators/rhaegalsat.json
-    volumes:
-      - ../space-ops-apps/telemetry_catalog:/app/telemetry_catalog:ro
-      - ../space-ops-apps/vehicle-configurations:/app/vehicle-configurations:ro
-    depends_on:
-      platform-api:
-        condition: service_healthy
-
-  satnogs-adapter:
-    build:
-      context: ../space-ops-apps/satnogs_adapter
-      dockerfile: Dockerfile
-    container_name: telemetry-satnogs-adapter
-    environment:
-      SATNOGS_API_TOKEN: ${SATNOGS_API_TOKEN:-}
-      VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
     volumes:
       - ../space-ops-apps/telemetry_catalog:/app/telemetry_catalog:ro
       - ../space-ops-apps/vehicle-configurations:/app/vehicle-configurations:ro

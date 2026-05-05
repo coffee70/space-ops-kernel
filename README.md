@@ -44,7 +44,7 @@ This starts:
 - `mission-control-ui` on port `3000`
 - `simulator` on port `8001`
 - `simulator2` on port `8002`
-- `satnogs-adapter`
+- managed `satnogs-adapter-service` through the control-plane bootstrap manifest
 
 Migrations run as part of service startup through Alembic for both backend services.
 
@@ -58,7 +58,7 @@ Migrations run as part of service startup through Alembic for both backend servi
 | **Playwright — browser/E2E** | `./scripts/validate-playwright.sh …` | Runs **`npm ci` inside the upstream Playwright image** and attaches the container to the Compose Docker network. Default base URL `http://mission-control-ui:3000`; see script env vars. **`smoke`** is the usual quick target. Full options: `./scripts/validate-playwright.sh help`. |
 | **Python — platform API** | [../space-ops-platform/README.md](../space-ops-platform/README.md) | `../space-ops-platform/scripts/run-backend-tests.sh` |
 | **Python — control-plane (this repo)** | `./scripts/run-control-plane-tests.sh` | Needs reachable **Postgres** and a working **`git`** on the runner; fixtures create ephemeral DBs. |
-| **Python — simulator / adapter** | [../space-ops-apps/README.md](../space-ops-apps/README.md) | **`PYTHONPATH` from `space-ops-apps`** is required so `simulator` / `satnogs_adapter` imports resolve. |
+| **Python — simulator** | [../space-ops-apps/README.md](../space-ops-apps/README.md) | **`PYTHONPATH` from `space-ops-apps`** is required so simulator imports resolve. |
 
 Rough “confidence ladder”:
 
@@ -130,9 +130,9 @@ Compose builds service images from sibling repositories:
 - `../space-ops-platform` for `platform-api`
 - `../space-ops-apps/mission-control-ui` for `mission-control-ui`
 - `../space-ops-apps/simulator` for `simulator` and `simulator2`
-- `../space-ops-apps/satnogs_adapter` for `satnogs-adapter`
+SatNOGS is no longer a hand-written Compose sidecar; it is deployed as managed Layer 2 service `satnogs-adapter-service` from `../space-ops-platform`.
 
-The selected Layer 3 vehicle configuration bundle is mounted into platform and app runtimes at `/app/vehicle-configurations`, with `VEHICLE_CONFIG_ROOT=/app/vehicle-configurations`.
+Managed platform services read vehicle configuration resources from `/app/platform/backend/resources/vehicle-configurations`. Simulator runtimes still mount the Layer 3 bundle at `/app/vehicle-configurations`.
 
 Common environment values:
 
