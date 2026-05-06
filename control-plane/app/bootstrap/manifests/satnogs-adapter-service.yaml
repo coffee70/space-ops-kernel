@@ -1,0 +1,30 @@
+unit_id: satnogs-adapter-service
+display_name: SatNOGS Adapter Service
+package_owner: space-ops-platform
+runtime_kind: service
+runtime_template: python-service
+source_path: project/space-ops-platform
+build:
+  command: pip install -r requirements.txt
+run:
+  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/satnogs-adapter-service --host 0.0.0.0 --port 8080"
+health:
+  type: http
+  path: /health
+  port: 8080
+discovery:
+  service_slug: satnogs-adapter-service
+  category: telemetry-adapter
+  api_base_path: /adapters/satnogs
+  capability_tags:
+    - adapter
+    - satnogs
+    - ax25
+    - aprs
+    - observation-sync
+    - realtime-ingest
+  health_endpoint: /health
+  visibility: internal
+  depends_on:
+    - source-registry-service
+    - telemetry-ingest-service

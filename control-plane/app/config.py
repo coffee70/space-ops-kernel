@@ -44,8 +44,14 @@ class Settings(BaseSettings):
     platform_database_url: str = "postgresql://telemetry:telemetry@postgres:5432/telemetry_db"
     platform_openai_api_key: str = ""
     platform_openai_base_url: str = ""
+    platform_api_base_url: str = "http://platform-api:8000"
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"
+    platform_vehicle_config_root: str = "/app/platform/backend/resources/vehicle-configurations"
+    platform_satnogs_api_token: str = ""
+    platform_satnogs_live_enabled: str = "false"
+    platform_satnogs_adapter_config: str = "app/adapters/satnogs/config.example.yaml"
+    platform_satnogs_dlq_root: str = "/app/runtime/satnogs-adapter/dlq"
     workspace_root: Path = Field(default_factory=default_workspace_root)
     runtime_root: Path | None = None
     platform_source_root: Path | None = None

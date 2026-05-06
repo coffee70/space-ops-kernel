@@ -12,9 +12,9 @@ If you touch tests, Compose, URLs, or anything that crosses services, skim all t
 
 ## Repo role (Layer 1)
 
-Keep changes scoped to runtime orchestration: Compose services, environment wiring, health/dependency ordering, ports, volumes, and database bootstrap SQL.
+Keep changes scoped to runtime orchestration: Compose services, environment wiring, health/dependency ordering, ports, volumes, managed runtime manifests, and database bootstrap SQL.
 
-Do not add telemetry business logic, FastAPI route code, database schema definitions, frontend code, simulator code, adapter code, or concrete vehicle configuration assets here. Those belong to sibling Layer 2 and Layer 3 repositories.
+Do not add telemetry business logic, FastAPI route code, database schema definitions, frontend code, simulator code, adapter code, or concrete vehicle configuration assets here. Adapter code, simulator code, and operational vehicle resources belong to Layer 2.
 
 ## How to run tests (canonical)
 
@@ -41,6 +41,6 @@ Assume the sibling layout (`space-ops-kernel`, `space-ops-platform`, `space-ops-
 
 4. **Python — control-plane in this repo:** integration tests create temporary databases via Postgres and shell out to `git`. Run **`./scripts/run-control-plane-tests.sh`** from **`space-ops-kernel`** with Postgres available (typically `docker compose up -d postgres` first); uses gitignored **`control-plane/.venv`**. Details: `README.md`.
 
-5. **Python — simulator / SatNOGS adapter:** `../space-ops-apps/scripts/run-python-tests.sh` (see Layer 3 README).
+5. **Python — simulator / SatNOGS adapter:** `../space-ops-platform/scripts/run-backend-tests.sh backend/tests/simulator backend/tests/adapters/satnogs` (see Layer 2 README).
 
 Agents should cite these entry points in summaries instead of improvised one-off `pytest`/`npm test` paths on the host when the canonical path exists.
