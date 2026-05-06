@@ -42,7 +42,7 @@ services:
       VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
       CONTROL_PLANE_URL: http://control-plane:8100
       NATS_URL: nats://nats:4222
-      CORS_ORIGIN_REGEX: "^http://[^/]+:3000$"
+      CORS_ORIGIN_REGEX: "^http://[^/]+:(3000|8080)$"
     healthcheck:
       test:
         [
@@ -73,7 +73,7 @@ services:
       COMPOSE_FILE: /app/kernel/docker-compose.yml
       COMPOSE_PROJECT_NAME: space-ops-kernel
       RUNTIME_STRATEGY: docker
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080,http://platform-edge-proxy:8080
       PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PLATFORM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
@@ -110,7 +110,7 @@ services:
       context: ../space-ops-apps/mission-control-ui
       dockerfile: Dockerfile
       args:
-        # Same-origin + next.config fallback rewrites to API_SERVER_URL (browser cannot reach localhost:8000 from Playwright/Compose net).
+        # Official path: use Layer 1 edge proxy (same-origin relative API routes). Raw :3000 is UI/debug only.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
         NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
     container_name: telemetry-mission-control-ui
@@ -126,6 +126,30 @@ services:
         condition: service_healthy
       control-plane:
         condition: service_healthy
+
+  platform-edge-proxy:
+    build:
+      context: ./platform-edge-proxy
+      dockerfile: Dockerfile
+    container_name: telemetry-platform-edge-proxy
+    ports:
+      - "8080:8080"
+    depends_on:
+      mission-control-ui:
+        condition: service_started
+      platform-api:
+        condition: service_healthy
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:

@@ -7,8 +7,8 @@ KERNEL_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 WORKSPACE_ROOT=$(cd "${KERNEL_ROOT}/.." && pwd)
 PLAYWRIGHT_WORKSPACE="${WORKSPACE_ROOT}/space-ops-apps/tools/playwright"
 PLAYWRIGHT_IMAGE="${PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.58.2-noble}"
-PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://mission-control-ui:3000}"
-PLAYWRIGHT_API_URL="${PLAYWRIGHT_API_URL:-http://platform-api:8000}"
+PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://platform-edge-proxy:8080}"
+PLAYWRIGHT_API_URL="${PLAYWRIGHT_API_URL:-http://platform-edge-proxy:8080}"
 PLAYWRIGHT_DOCKER_NETWORK="${PLAYWRIGHT_DOCKER_NETWORK:-space-ops-kernel_default}"
 TARGET="${1:-test}"
 
@@ -60,6 +60,7 @@ Environment overrides:
   PLAYWRIGHT_IMAGE
   PLAYWRIGHT_BASE_URL
   PLAYWRIGHT_API_URL
+  PLAYWRIGHT_PLATFORM_API_URL  # optional; edge-proxy HTTP test compares against raw platform-api (default http://platform-api:8000)
   PLAYWRIGHT_DOCKER_NETWORK
 EOF
     exit 0
