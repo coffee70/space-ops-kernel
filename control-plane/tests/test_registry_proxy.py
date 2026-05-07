@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
-from unittest.mock import ANY
+from unittest.mock import ANY, MagicMock
+
+EXPECTED_RUNTIME_PROXY_TIMEOUT = {"connect": 2.0, "read": 8.0, "write": 8.0}
+
+
+def _serialized_async_timeout(timeout: object) -> object:
+    """Match httpx.AsyncClient timeouts used by the runtime proxy."""
+    if isinstance(timeout, httpx.Timeout):
+        return {
+            "connect": timeout.connect,
+            "read": timeout.read,
+            "write": timeout.write,
+        }
+    return timeout
+
 
 PROXY_FIXTURE_UNIT_ID = "proxy-backed-test-application"
 PROXY_FIXTURE_APP_ID = "proxy-backed-test"
@@ -102,7 +118,7 @@ def _set_active_application_runtime_ref(application_id: str, runtime_ref: dict |
 
 
 class RecordingAsyncClient:
-    def __init__(self, *, follow_redirects: bool, timeout: float):
+    def __init__(self, *, follow_redirects: bool, timeout: float | httpx.Timeout):
         self.follow_redirects = follow_redirects
         self.timeout = timeout
 
@@ -120,7 +136,7 @@ class RecordingAsyncClient:
                 "headers": headers or {},
                 "content": content,
                 "follow_redirects": self.follow_redirects,
-                "timeout": self.timeout,
+                "timeout": _serialized_async_timeout(self.timeout),
             }
         )
         return self.response
@@ -150,7 +166,7 @@ def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatc
             "headers": ANY,
             "content": None,
             "follow_redirects": False,
-            "timeout": 30.0,
+            "timeout": EXPECTED_RUNTIME_PROXY_TIMEOUT,
         }
     ]
 
@@ -314,7 +330,7 @@ def test_internal_service_proxy_uses_active_deployment_runtime_ref(client, monke
             "headers": ANY,
             "content": None,
             "follow_redirects": False,
-            "timeout": 30.0,
+            "timeout": EXPECTED_RUNTIME_PROXY_TIMEOUT,
         }
     ]
 
@@ -447,3 +463,58 @@ def test_legacy_proxy_routes_return_404(client, method: str, path: str) -> None:
     response = client.request(method, path, follow_redirects=False)
 
     assert response.status_code == 404
+
+
+class _ConnectFailAsyncClient:
+    """AsyncClient shim that raises on first upstream request."""
+
+    def __init__(self, *_a, **_k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def request(self, *_a, **_k):
+        raise httpx.ConnectError("connection refused", request=MagicMock())
+
+
+class _ReadTimeoutAsyncClient(_ConnectFailAsyncClient):
+    async def request(self, *_a, **_k):
+        raise httpx.ReadTimeout("timed out")
+
+
+def test_internal_service_proxy_returns_502_fast_on_connect_failure(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", _ConnectFailAsyncClient)
+
+    started = time.perf_counter()
+    response = client.get("/internal/runtime-services/vehicle-config-service/health")
+    elapsed_ms = (time.perf_counter() - started) * 1000
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "runtime proxy upstream connect failed"
+    assert elapsed_ms < 5000
+
+
+def test_internal_service_proxy_returns_504_fast_on_upstream_read_timeout(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", _ReadTimeoutAsyncClient)
+
+    started = time.perf_counter()
+    response = client.get("/internal/runtime-services/vehicle-config-service/health")
+    elapsed_ms = (time.perf_counter() - started) * 1000
+
+    assert response.status_code == 504
+    assert response.json()["detail"] == "runtime proxy upstream timeout"
+    assert elapsed_ms < 5000

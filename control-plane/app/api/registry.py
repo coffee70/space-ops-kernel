@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Iterable
+from urllib.parse import urlparse, urlunparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -18,6 +21,7 @@ from app.schemas import (
     RegistryServiceResponse,
     RegistryUnitSummaryResponse,
     RuntimeRef,
+    RuntimeTransportDebug,
     SERVICE_SLUG_PATTERN,
 )
 from app.services.proxy_targets import (
@@ -26,6 +30,8 @@ from app.services.proxy_targets import (
     validate_runtime_path,
     validate_runtime_ref,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/registry", tags=["registry"])
 proxy_router = APIRouter(prefix="/runtime-applications", tags=["runtime-applications"])
@@ -82,7 +88,11 @@ def _safe_discovery_capabilities(discovery: dict) -> list[str]:
     return safe
 
 
-def _serialize_service(unit: ManagedUnit) -> RegistryServiceResponse:
+def _serialize_service(
+    unit: ManagedUnit,
+    *,
+    runtime_target: RuntimeTransportDebug | None = None,
+) -> RegistryServiceResponse:
     discovery = unit.discovery_metadata_json if isinstance(unit.discovery_metadata_json, dict) else {}
     service_slug = discovery.get("service_slug")
     if not isinstance(service_slug, str) or not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
@@ -99,6 +109,7 @@ def _serialize_service(unit: ManagedUnit) -> RegistryServiceResponse:
         category=_safe_discovery_text(discovery, "category"),
         description=_safe_discovery_text(discovery, "description"),
         capabilities=_safe_discovery_capabilities(discovery),
+        runtime_target=runtime_target,
     )
 
 
@@ -190,9 +201,34 @@ def get_units(session: Session = Depends(get_db)) -> list[RegistryUnitSummaryRes
 
 
 @router.get("/services", response_model=list[RegistryServiceResponse])
-def get_services(session: Session = Depends(get_db)) -> list[RegistryServiceResponse]:
+def get_services(
+    session: Session = Depends(get_db),
+    include_runtime_transport: bool = Query(False, alias="includeRuntimeTransport"),
+) -> list[RegistryServiceResponse]:
     registry = RegistryService(session)
-    return _serialize_services(registry.get_units(kind="service"))
+    settings = get_settings()
+    if include_runtime_transport and settings.environment == "production":
+        raise HTTPException(status_code=400, detail="includeRuntimeTransport is not allowed in production")
+    units = registry.get_units(kind="service")
+    if not include_runtime_transport:
+        return _serialize_services(units)
+
+    payloads: list[RegistryServiceResponse] = []
+    for unit in units:
+        runtime_target: RuntimeTransportDebug | None = None
+        try:
+            ref = registry.get_runtime_ref_for_unit(unit.unit_id)
+            if ref is not None:
+                runtime_target = RuntimeTransportDebug(
+                    serviceName=ref.service_name,
+                    host=ref.transport.host,
+                    port=ref.transport.port,
+                    healthPath=ref.health.path,
+                )
+        except Exception:
+            runtime_target = None
+        payloads.append(_serialize_service(unit, runtime_target=runtime_target))
+    return payloads
 
 
 def _get_runtime_ref_for_unit(registry: RegistryService, unit: ManagedUnit) -> RuntimeRef:
@@ -262,12 +298,21 @@ def _extract_raw_proxy_path(request: Request, route_prefix: str) -> str:
     return ""
 
 
+def _upstream_for_log(url: str) -> str:
+    """Log scheme/host/port/path without query strings (may contain opaque ids)."""
+
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path or "", "", "", ""))
+
+
 async def _proxy_request(
     runtime_ref: RuntimeRef,
     request: Request,
     path: str = "",
     raw_path: str = "",
     strip_sensitive_headers: bool = False,
+    *,
+    proxy_target_label: str | None = None,
 ) -> Response:
     try:
         validated_path = validate_runtime_path(path)
@@ -280,16 +325,69 @@ async def _proxy_request(
     stripped_headers = HOP_BY_HOP_HEADERS | (SENSITIVE_FORWARD_HEADERS if strip_sensitive_headers else set())
     headers = {key: value for key, value in request.headers.items() if key.lower() not in stripped_headers}
     body = await request.body()
+    settings = get_settings()
+    timeout = httpx.Timeout(
+        connect=settings.runtime_proxy_connect_timeout_seconds,
+        read=settings.runtime_proxy_read_timeout_seconds,
+        write=settings.runtime_proxy_read_timeout_seconds,
+        pool=2.0,
+    )
+    label = proxy_target_label or runtime_ref.service_name
+    upstream_log = _upstream_for_log(upstream)
+    started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
             upstream_response = await client.request(
                 request.method,
                 upstream,
                 headers=headers,
                 content=body if body else None,
             )
+    except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.ConnectTimeout) as exc:
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.error(
+            "runtime proxy upstream timeout target=%s method=%s upstream=%s elapsed_ms=%s exc_type=%s msg=%s",
+            label,
+            request.method,
+            upstream_log,
+            elapsed_ms,
+            type(exc).__name__,
+            str(exc) or "(empty)",
+        )
+        raise HTTPException(
+            status_code=504,
+            detail="runtime proxy upstream timeout",
+        ) from exc
+    except httpx.ConnectError as exc:
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.error(
+            "runtime proxy upstream connect failed target=%s method=%s upstream=%s elapsed_ms=%s exc_type=%s msg=%s",
+            label,
+            request.method,
+            upstream_log,
+            elapsed_ms,
+            type(exc).__name__,
+            str(exc) or "(empty)",
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="runtime proxy upstream connect failed",
+        ) from exc
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail="runtime proxy unavailable") from exc
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.error(
+            "runtime proxy upstream error target=%s method=%s upstream=%s elapsed_ms=%s exc_type=%s msg=%s",
+            label,
+            request.method,
+            upstream_log,
+            elapsed_ms,
+            type(exc).__name__,
+            str(exc) or "(empty)",
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="runtime proxy upstream transport error",
+        ) from exc
 
     return Response(
         content=upstream_response.content,
@@ -322,7 +420,13 @@ async def proxy_application(
     registry = RegistryService(session)
     runtime_ref = _get_runtime_ref_for_application(registry, application_id)
     raw_path = _extract_raw_proxy_path(request, f"/runtime-applications/{application_id}")
-    return await _proxy_request(runtime_ref, request, path=path, raw_path=raw_path)
+    return await _proxy_request(
+        runtime_ref,
+        request,
+        path=path,
+        raw_path=raw_path,
+        proxy_target_label=f"application:{application_id}",
+    )
 
 
 @internal_proxy_router.api_route(
@@ -353,4 +457,5 @@ async def proxy_runtime_service(
         path=path,
         raw_path=raw_path,
         strip_sensitive_headers=True,
+        proxy_target_label=f"service:{service_slug}",
     )
