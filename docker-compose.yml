@@ -41,6 +41,7 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
       CONTROL_PLANE_URL: http://control-plane:8100
+      KERNEL_SERVICE_PROXY_READ_TIMEOUT: "900"
       NATS_URL: nats://nats:4222
       CORS_ORIGIN_REGEX: "^http://[^/]+:(3000|8080)$"
     healthcheck:
@@ -73,6 +74,7 @@ services:
       COMPOSE_FILE: /app/kernel/docker-compose.yml
       COMPOSE_PROJECT_NAME: space-ops-kernel
       RUNTIME_STRATEGY: docker
+      RUNTIME_PROXY_READ_TIMEOUT_SECONDS: 900
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080,http://platform-edge-proxy:8080
       PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
