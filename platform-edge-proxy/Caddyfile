@@ -1,0 +1,46 @@
+# Layer 1 browser-facing entrypoint. Upstream hostnames match docker-compose service names.
+{
+	admin off
+}
+
+:8080 {
+	handle /health {
+		respond "ok" 200
+	}
+
+	# Platform API gateway (HTTP + WebSocket). Longer paths first.
+	handle /telemetry/realtime/ws* {
+		reverse_proxy platform-api:8000
+	}
+	handle /telemetry/* {
+		reverse_proxy platform-api:8000
+	}
+	handle /ops/* {
+		reverse_proxy platform-api:8000
+	}
+	handle /simulator/* {
+		reverse_proxy platform-api:8000
+	}
+	handle /vehicle-configs* {
+		reverse_proxy platform-api:8000
+	}
+	handle /intelligence/* {
+		reverse_proxy platform-api:8000
+	}
+
+	# Control plane
+	handle /registry/* {
+		reverse_proxy control-plane:8100
+	}
+	handle /runtime-applications/* {
+		reverse_proxy control-plane:8100
+	}
+	handle /internal/runtime-services/* {
+		reverse_proxy control-plane:8100
+	}
+
+	# Mission Control UI (App Router + static + remaining paths)
+	handle {
+		reverse_proxy mission-control-ui:3000
+	}
+}

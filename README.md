@@ -36,9 +36,18 @@ Start the split stack from this repository:
 docker compose up -d
 ```
 
+**Official browser entrypoint (Layer 1 edge proxy):** open Mission Control at **`http://localhost:8080`**. same-origin HTTP and WebSocket (for example `/telemetry/realtime/ws`) are routed here; `NEXT_PUBLIC_API_URL=""` remains the intended setting so the UI keeps using relative API paths through the proxy.
+
+**Debug / direct service ports (not the full same-origin stack on UI alone):**
+
+- Raw Mission Control UI only: `http://localhost:3000` — Next.js alone; platform and control-plane routes are **not** guaranteed here. Use the edge proxy URL for the current system.
+- Raw `platform-api`: `http://localhost:8000`
+- Raw `control-plane`: `http://localhost:8100`
+
 This starts:
 
 - `postgres` on port `5432`
+- `platform-edge-proxy` on port **`8080`** (browser-facing; proxies to UI, platform API, and control plane)
 - `platform-api` on port `8000`
 - `control-plane` on port `8100`
 - `mission-control-ui` on port `3000`
@@ -54,7 +63,7 @@ Migrations run as part of service startup through Alembic for both backend servi
 | Goal | Canonical entry point | Notes |
 |------|------------------------|-------|
 | **Node / TS — agent runtime + Mission Control** | `./scripts/validate-node.sh` | Runs **`npm ci` inside a Linux Node Docker image**, then agent-runtime `build` + `test` and Mission Control `npm run validate`. Use this instead of bare `npm test`/`npm run validate` on the host if `node_modules` might be from another OS/arch (copying deps from Compose builds is the usual culprit). Override image with `NODE_IMAGE`. |
-| **Playwright — browser/E2E** | `./scripts/validate-playwright.sh …` | Runs **`npm ci` inside the upstream Playwright image** and attaches the container to the Compose Docker network. Default base URL `http://mission-control-ui:3000`; see script env vars. **`smoke`** is the usual quick target. Full options: `./scripts/validate-playwright.sh help`. |
+| **Playwright — browser/E2E** | `./scripts/validate-playwright.sh …` | Runs **`npm ci` inside the upstream Playwright image** and attaches the container to the Compose Docker network. Default base URL **`http://platform-edge-proxy:8080`** (Layer 1 edge proxy). Override with `PLAYWRIGHT_BASE_URL` / `PLAYWRIGHT_API_URL`. **`smoke`** is the usual quick target. Full options: `./scripts/validate-playwright.sh help`. |
 | **Python — platform API** | [../space-ops-platform/README.md](../space-ops-platform/README.md) | `../space-ops-platform/scripts/run-backend-tests.sh` |
 | **Python — control-plane (this repo)** | `./scripts/run-control-plane-tests.sh` | Needs reachable **Postgres** and a working **`git`** on the runner; fixtures create ephemeral DBs. |
 | **Python — simulator** | [../space-ops-platform/README.md](../space-ops-platform/README.md) | `../space-ops-platform/scripts/run-backend-tests.sh backend/tests/simulator` |
@@ -98,12 +107,16 @@ KERNEL_TEST_DATABASE_URL=postgresql://telemetry:telemetry@localhost:5432/postgre
 
 ### Playwright prerequisites (Compose network)
 
-Containers address each other **by Compose service names**, not `localhost`. Before running `./scripts/validate-playwright.sh`, rebuild/start UI with URLs the browser runner can resolve:
+Containers address each other **by Compose service names**, not `localhost`. Bring up the stack including the edge proxy, then run Playwright (defaults target **`platform-edge-proxy:8080`**):
 
 ```bash
-NEXT_PUBLIC_API_URL=http://platform-api:8000 \
-NEXT_PUBLIC_CONTROL_PLANE_URL=http://control-plane:8100 \
-docker compose up -d --build mission-control-ui
+docker compose up -d --build
+```
+
+For the official same-origin path, keep empty public API URL (build args can be omitted):
+
+```bash
+docker compose up -d --build mission-control-ui platform-edge-proxy
 ```
 
 Further nuance lives in [../space-ops-apps/tools/playwright/README.md](../space-ops-apps/tools/playwright/README.md).
@@ -136,9 +149,9 @@ Common environment values:
 
 - `platform-api DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/telemetry_db`
 - `control-plane DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/control_plane_db`
-- `NEXT_PUBLIC_API_URL=http://localhost:8000` by default
-- `API_SERVER_URL=http://platform-api:8000`
-- `CORS_ORIGIN_REGEX=^http://[^/]+:3000$`
+- `NEXT_PUBLIC_API_URL` unset/empty for same-origin via **`platform-edge-proxy:8080`**
+- `API_SERVER_URL=http://platform-api:8000` (Next server-side rewrites removed; edge proxy routes browser-facing `/telemetry/*`, `/ops/*`, etc.)
+- `CORS_ORIGIN_REGEX` allows UI and edge ports (see `docker-compose.yml`)
 - `SATNOGS_API_TOKEN` optional
 
 ## Useful Compose commands

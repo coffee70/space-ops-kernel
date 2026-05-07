@@ -465,6 +465,17 @@ class TemplateSummary(BaseModel):
     description: str
 
 
+class RuntimeTransportDebug(BaseModel):
+    """Optional internal proxy target hints for debugging (non-production only)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    service_name: str = Field(alias="serviceName")
+    host: str
+    port: int
+    health_path: str = Field(alias="healthPath")
+
+
 class RegistryServiceResponse(BaseModel):
     """Public service catalog response without runtime topology."""
 
@@ -481,6 +492,7 @@ class RegistryServiceResponse(BaseModel):
     category: str | None = None
     description: str | None = None
     capabilities: list[str] = Field(default_factory=list)
+    runtime_target: RuntimeTransportDebug | None = Field(default=None, alias="runtimeTarget")
 
     @field_validator("service_slug")
     @classmethod

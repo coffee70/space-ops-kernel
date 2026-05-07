@@ -35,7 +35,7 @@ Assume the sibling layout (`space-ops-kernel`, `space-ops-platform`, `space-ops-
    ./scripts/validate-playwright.sh test    # full suite selection (see script help)
    ```
 
-   Prerequisites: Compose stack reachable on the expected network (`PLAYWRIGHT_DOCKER_NETWORK`, default `space-ops-kernel_default`), UI built with browser-reachable API URLs (`README.md` Testing section).
+   Prerequisites: Compose stack reachable on the expected network (`PLAYWRIGHT_DOCKER_NETWORK`, default `space-ops-kernel_default`), including **`platform-edge-proxy`** (`PLAYWRIGHT_BASE_URL` defaults to `http://platform-edge-proxy:8080`; see `README.md`).
 
 3. **Python — platform backend (Layer 2):** `../space-ops-platform/scripts/run-backend-tests.sh` (see Layer 2 README). Layer 1 does not wrap this today.
 
