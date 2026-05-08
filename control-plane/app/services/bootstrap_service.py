@@ -4,21 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import httpx
+import yaml
 
 from app.config import Settings
 from app.db import get_session_factory
 from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
 from app.registry.service import RegistryService
-from app.schemas import DeploymentSubmissionRequest, RuntimeRef
+from app.schemas import DeploymentSubmissionRequest, RuntimeRef, UnitManifest
 from app.services.proxy_targets import build_runtime_health_url
 from app.services.shell import run_command
+
+logger = logging.getLogger(__name__)
 
 IGNORE_NAMES = shutil.ignore_patterns(
     ".git",
@@ -54,6 +60,48 @@ BOOTSTRAP_UNITS = (
     "platform-api-gateway",
     "derived-telemetry-service",
 )
+
+
+@dataclass
+class RuntimeUnitBootstrapResult:
+    """Result for a single runtime bootstrap unit."""
+
+    unit_id: str
+    status: str
+    deployment_id: str | None = None
+    failure_reason: str | None = None
+
+
+@dataclass
+class RuntimeBootstrapResult:
+    """Aggregate runtime bootstrap result."""
+
+    units: list[RuntimeUnitBootstrapResult] = field(default_factory=list)
+
+    @property
+    def failed_units(self) -> list[RuntimeUnitBootstrapResult]:
+        return [unit for unit in self.units if unit.status == "failed"]
+
+    @property
+    def healthy_units(self) -> list[RuntimeUnitBootstrapResult]:
+        return [unit for unit in self.units if unit.status in {"healthy", "current"}]
+
+    def add(self, unit: RuntimeUnitBootstrapResult) -> None:
+        self.units.append(unit)
+
+
+class RuntimeBootstrapStatusTracker(Protocol):
+    """Subset of status-service methods used by the bootstrapper."""
+
+    def mark_unit_deploying(self, run_id: int, unit_id: str) -> None: ...
+
+    def mark_unit_current(self, run_id: int, unit_id: str, deployment_id: str | None = None) -> None: ...
+
+    def mark_unit_skipped(self, run_id: int, unit_id: str, reason: str | None = None) -> None: ...
+
+    def mark_unit_healthy(self, run_id: int, unit_id: str, deployment_id: str | None = None) -> None: ...
+
+    def mark_unit_failed(self, run_id: int, unit_id: str, reason: str, deployment_id: str | None = None) -> None: ...
 
 
 class ManagedForkBootstrapper:
@@ -216,31 +264,126 @@ class RuntimeBootstrapper:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def ensure_bootstrapped(self) -> None:
+    def seed_bootstrap_unit_registry(self) -> None:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            registry = RegistryService(session)
+            for manifest_path in sorted((self.settings.main_worktree_dir / "manifests" / "units").glob("*.yaml")):
+                if manifest_path.stem not in BOOTSTRAP_UNITS:
+                    continue
+                manifest = UnitManifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
+                registry.seed_manifest_unit(manifest)
+            session.commit()
+
+    def ensure_bootstrapped(
+        self,
+        *,
+        fail_fast: bool = False,
+        status_tracker: RuntimeBootstrapStatusTracker | None = None,
+        run_id: int | None = None,
+    ) -> RuntimeBootstrapResult:
         repository = ManagedGitRepository(self.settings)
         commit_sha = repository.get_head_commit("main")
         session_factory = get_session_factory()
+        bootstrap_result = RuntimeBootstrapResult()
 
-        with session_factory() as session:
-            deployment_service = DeploymentService(self.settings, repository, session)
-            registry = RegistryService(session)
+        for unit_id in BOOTSTRAP_UNITS:
+            deployment_id: str | None = None
+            try:
+                with session_factory() as session:
+                    deployment_service = DeploymentService(self.settings, repository, session)
+                    registry = RegistryService(session)
 
-            for unit_id in BOOTSTRAP_UNITS:
-                if self._deployment_is_current(registry, deployment_service, unit_id, commit_sha):
-                    continue
-                if not self._bootstrap_source_exists(deployment_service, unit_id, commit_sha):
-                    continue
-                result = deployment_service.submit(
-                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
-                    delete_eligible=False,
-                )
-                session.commit()
-                if result.status != "healthy":
-                    raise RuntimeError(f"failed to bootstrap {unit_id}: {result.failure_reason or result.status}")
+                    current_deployment_id = self._current_deployment_id(registry, deployment_service, unit_id, commit_sha)
+                    if current_deployment_id is not None:
+                        unit_result = RuntimeUnitBootstrapResult(unit_id, "current", current_deployment_id)
+                        session.commit()
+                        self._record_status(status_tracker, run_id, unit_result)
+                        bootstrap_result.add(unit_result)
+                        logger.info("runtime bootstrap unit current: %s", unit_id)
+                        continue
+
+                    if not self._bootstrap_source_exists(deployment_service, unit_id, commit_sha):
+                        unit_result = RuntimeUnitBootstrapResult(unit_id, "skipped", failure_reason="bootstrap source missing")
+                        session.commit()
+                        self._record_status(status_tracker, run_id, unit_result)
+                        bootstrap_result.add(unit_result)
+                        logger.info("runtime bootstrap unit skipped: %s", unit_id)
+                        continue
+
+                    if status_tracker is not None and run_id is not None:
+                        status_tracker.mark_unit_deploying(run_id, unit_id)
+                    result = deployment_service.submit(
+                        DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
+                        delete_eligible=False,
+                    )
+                    deployment_id = result.deployment_id
+                    session.commit()
+                    if result.status == "healthy":
+                        unit_result = RuntimeUnitBootstrapResult(unit_id, "healthy", result.deployment_id)
+                        logger.info("runtime bootstrap unit healthy: %s deployment=%s", unit_id, result.deployment_id)
+                    else:
+                        reason = result.failure_reason or result.status
+                        unit_result = RuntimeUnitBootstrapResult(unit_id, "failed", result.deployment_id, reason)
+                        logger.error("runtime bootstrap unit failed: %s reason=%s", unit_id, reason)
+                    self._record_status(status_tracker, run_id, unit_result)
+                    bootstrap_result.add(unit_result)
+            except Exception as exc:
+                reason = str(exc) or type(exc).__name__
+                unit_result = RuntimeUnitBootstrapResult(unit_id, "failed", deployment_id, reason)
+                bootstrap_result.add(unit_result)
+                self._record_status(status_tracker, run_id, unit_result)
+                logger.exception("runtime bootstrap unit failed: %s reason=%s", unit_id, reason)
+                if fail_fast:
+                    raise
+
+        summary = {
+            "healthy": len([unit for unit in bootstrap_result.units if unit.status == "healthy"]),
+            "current": len([unit for unit in bootstrap_result.units if unit.status == "current"]),
+            "skipped": len([unit for unit in bootstrap_result.units if unit.status == "skipped"]),
+            "failed": len(bootstrap_result.failed_units),
+        }
+        logger.info(
+            "runtime bootstrap completed: healthy=%s current=%s skipped=%s failed=%s",
+            summary["healthy"],
+            summary["current"],
+            summary["skipped"],
+            summary["failed"],
+        )
+        return bootstrap_result
 
     def _bootstrap_source_exists(self, deployment_service: DeploymentService, unit_id: str, commit_sha: str) -> bool:
         manifest = deployment_service._load_manifest(commit_sha, unit_id)
         return (self.settings.main_worktree_dir / manifest.source_path).exists()
+
+    def _current_deployment_id(
+        self,
+        registry: RegistryService,
+        deployment_service: DeploymentService,
+        unit_id: str,
+        commit_sha: str,
+    ) -> str | None:
+        unit = registry.get_unit(unit_id)
+        if unit is None or not unit.active_deployment_id:
+            return None
+
+        deployment = registry.get_deployment(unit.active_deployment_id)
+        if deployment is None or deployment.status != "healthy" or deployment.commit_sha != commit_sha:
+            return None
+        if self.settings.runtime_strategy != "docker":
+            return deployment.deployment_id
+
+        if not deployment.runtime_ref:
+            return None
+        try:
+            runtime_ref = RuntimeRef.model_validate(deployment.runtime_ref)
+        except Exception:
+            return None
+        health_url = build_runtime_health_url(runtime_ref)
+        manifest = deployment_service._load_manifest(commit_sha, unit_id)
+        if not self._healthcheck_passes(manifest.health.path, health_url):
+            return None
+        return deployment.deployment_id
 
     def _deployment_is_current(
         self,
@@ -249,25 +392,29 @@ class RuntimeBootstrapper:
         unit_id: str,
         commit_sha: str,
     ) -> bool:
-        unit = registry.get_unit(unit_id)
-        if unit is None or not unit.active_deployment_id:
-            return False
+        return self._current_deployment_id(registry, deployment_service, unit_id, commit_sha) is not None
 
-        deployment = registry.get_deployment(unit.active_deployment_id)
-        if deployment is None or deployment.status != "healthy" or deployment.commit_sha != commit_sha:
-            return False
-        if self.settings.runtime_strategy != "docker":
-            return True
-
-        if not deployment.runtime_ref:
-            return False
-        try:
-            runtime_ref = RuntimeRef.model_validate(deployment.runtime_ref)
-        except Exception:
-            return False
-        health_url = build_runtime_health_url(runtime_ref)
-        manifest = deployment_service._load_manifest(commit_sha, unit_id)
-        return self._healthcheck_passes(manifest.health.path, health_url)
+    @staticmethod
+    def _record_status(
+        status_tracker: RuntimeBootstrapStatusTracker | None,
+        run_id: int | None,
+        result: RuntimeUnitBootstrapResult,
+    ) -> None:
+        if status_tracker is None or run_id is None:
+            return
+        if result.status == "current":
+            status_tracker.mark_unit_current(run_id, result.unit_id, result.deployment_id)
+        elif result.status == "skipped":
+            status_tracker.mark_unit_skipped(run_id, result.unit_id, result.failure_reason)
+        elif result.status == "healthy":
+            status_tracker.mark_unit_healthy(run_id, result.unit_id, result.deployment_id)
+        elif result.status == "failed":
+            status_tracker.mark_unit_failed(
+                run_id,
+                result.unit_id,
+                result.failure_reason or "runtime bootstrap failed",
+                result.deployment_id,
+            )
 
     @staticmethod
     def _healthcheck_passes(health_path: str, health_url: str) -> bool:

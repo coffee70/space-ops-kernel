@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -245,6 +246,37 @@ def _get_runtime_ref_for_unit(registry: RegistryService, unit: ManagedUnit) -> R
     return runtime_ref
 
 
+def _runtime_service_not_ready_response(
+    service_slug: str,
+    *,
+    deployment_id: str | None = None,
+    status: str | None = None,
+) -> JSONResponse:
+    payload = {
+        "error_code": "runtime_service_not_ready",
+        "service_slug": service_slug,
+        "message": f"Runtime service is not ready: {service_slug}",
+    }
+    if deployment_id is not None:
+        payload["deployment_id"] = deployment_id
+    if status is not None:
+        payload["status"] = status
+    return JSONResponse(status_code=503, content=payload)
+
+
+def _service_not_ready_payload(registry: RegistryService, unit: ManagedUnit) -> dict[str, str | None] | None:
+    active = registry.get_active_deployment_for_unit(unit.unit_id)
+    if active is not None and active.runtime_ref:
+        return None
+    deployment = registry.get_deployment(unit.active_deployment_id) if unit.active_deployment_id else None
+    if deployment is None:
+        deployment = registry.get_latest_deployment_for_unit(unit.unit_id)
+    return {
+        "deployment_id": deployment.deployment_id if deployment is not None else None,
+        "status": deployment.status if deployment is not None else unit.deployment_status,
+    }
+
+
 def _find_service_by_slug(units: Iterable[ManagedUnit], service_slug: str) -> ManagedUnit | None:
     return next(
         (
@@ -449,6 +481,13 @@ async def proxy_runtime_service(
     unit = _find_service_by_slug(registry.get_units(kind="service"), service_slug)
     if unit is None:
         raise HTTPException(status_code=404, detail="service not found")
+    not_ready = _service_not_ready_payload(registry, unit)
+    if not_ready is not None:
+        return _runtime_service_not_ready_response(
+            service_slug,
+            deployment_id=not_ready.get("deployment_id"),
+            status=not_ready.get("status"),
+        )
     runtime_ref = _get_runtime_ref_for_unit(registry, unit)
     raw_path = _extract_raw_proxy_path(request, f"/internal/runtime-services/{service_slug}")
     return await _proxy_request(

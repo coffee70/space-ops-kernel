@@ -249,8 +249,47 @@ class RegistryService:
     def get_unit(self, unit_id: str) -> ManagedUnit | None:
         return self.session.get(ManagedUnit, unit_id)
 
+    def seed_manifest_unit(self, manifest: UnitManifest) -> ManagedUnit:
+        unit = self.session.get(ManagedUnit, manifest.unit_id)
+        if unit is None:
+            unit = ManagedUnit(
+                unit_id=manifest.unit_id,
+                display_name=manifest.display_name,
+                package_owner=manifest.package_owner,
+                runtime_kind=manifest.runtime_kind,
+                runtime_template=manifest.runtime_template,
+                source_path=manifest.source_path,
+                deployment_status="pending",
+                health_status="unknown",
+                discovery_metadata_json={**manifest.discovery},
+                delete_eligible=False,
+            )
+            self.session.add(unit)
+        else:
+            unit.display_name = manifest.display_name
+            unit.package_owner = manifest.package_owner
+            unit.runtime_kind = manifest.runtime_kind
+            unit.runtime_template = manifest.runtime_template
+            unit.source_path = manifest.source_path
+            unit.discovery_metadata_json = {**manifest.discovery}
+            unit.delete_eligible = False
+            if not unit.active_deployment_id:
+                unit.deployment_status = "pending"
+                unit.health_status = "unknown"
+            unit.updated_at = utcnow()
+        self.session.flush()
+        return unit
+
     def get_deployment(self, deployment_id: str) -> Deployment | None:
         return self.session.get(Deployment, deployment_id)
+
+    def get_latest_deployment_for_unit(self, unit_id: str) -> Deployment | None:
+        return (
+            self.session.query(Deployment)
+            .filter(Deployment.unit_id == unit_id)
+            .order_by(Deployment.requested_at.desc(), Deployment.deployment_id.desc())
+            .first()
+        )
 
     def get_active_deployment_for_unit(self, unit_id: str) -> Deployment | None:
         unit = self.get_unit(unit_id)

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from app.config import get_settings
 from app.db import Base
-from app.models import Deployment, DeploymentEvent, ManagedUnit, UnitHealthSnapshot  # noqa: F401
+from app.models import Deployment, DeploymentEvent, ManagedUnit, RuntimeBootstrapRun, RuntimeBootstrapUnit, UnitHealthSnapshot  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

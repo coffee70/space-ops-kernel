@@ -439,15 +439,49 @@ def test_internal_service_proxy_returns_404_for_unknown_service_slug(client) -> 
     assert response.json()["detail"] == "service not found"
 
 
-def test_internal_service_proxy_returns_502_without_runtime(client) -> None:
+def test_internal_service_proxy_returns_503_without_runtime(client) -> None:
     deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
     assert deployment.status_code == 200
     _set_active_service_runtime_ref("vehicle-config-service", None)
 
     response = client.get("/internal/runtime-services/vehicle-config-service/health")
 
-    assert response.status_code == 502
-    assert response.json()["detail"] == "service has no active runtime"
+    assert response.status_code == 503
+    assert response.json() == {
+        "error_code": "runtime_service_not_ready",
+        "service_slug": "vehicle-config-service",
+        "message": "Runtime service is not ready: vehicle-config-service",
+        "deployment_id": deployment.json()["deployment_id"],
+        "status": "healthy",
+    }
+
+
+def test_internal_service_proxy_returns_503_for_failed_runtime(client) -> None:
+    from app.db import get_session_factory
+    from app.registry.service import RegistryService
+
+    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
+    assert deployment.status_code == 200
+    deployment_id = deployment.json()["deployment_id"]
+    with get_session_factory()() as session:
+        registry = RegistryService(session)
+        row = registry.get_deployment(deployment_id)
+        assert row is not None
+        row.status = "failed"
+        row.health_status = "failing"
+        row.failure_reason = "synthetic failure"
+        session.commit()
+
+    response = client.get("/internal/runtime-services/vehicle-config-service/health")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error_code": "runtime_service_not_ready",
+        "service_slug": "vehicle-config-service",
+        "message": "Runtime service is not ready: vehicle-config-service",
+        "deployment_id": deployment_id,
+        "status": "failed",
+    }
 
 
 @pytest.mark.parametrize(

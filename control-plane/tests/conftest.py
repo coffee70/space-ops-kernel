@@ -146,6 +146,7 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("APPS_SOURCE_ROOT", str(apps_root))
     monkeypatch.setenv("RUNTIME_ROOT", str(runtime_root))
     monkeypatch.setenv("RUNTIME_STRATEGY", "stub")
+    monkeypatch.setenv("CONTROL_PLANE_SKIP_BACKGROUND_RUNTIME_BOOTSTRAP", "1")
     base_database_url = (
         os.environ.get("KERNEL_TEST_DATABASE_URL")
         or os.environ.get("DATABASE_URL")
