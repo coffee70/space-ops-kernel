@@ -8,3 +8,4 @@ psycopg2-binary
 alembic
 pyyaml>=6.0
 pytest>=7.0
+pytest-xdist>=3.6

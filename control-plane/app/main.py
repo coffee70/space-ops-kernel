@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 
@@ -53,6 +54,9 @@ async def lifespan(_: FastAPI):
     ManagedForkBootstrapper(settings).ensure_bootstrapped()
     ApplicationRegistryBootstrapper(settings).ensure_seeded()
     RuntimeBootstrapper(settings).seed_bootstrap_unit_registry()
+    if os.environ.get("CONTROL_PLANE_SKIP_BACKGROUND_RUNTIME_BOOTSTRAP") == "1":
+        yield
+        return
     stop_event = threading.Event()
     thread = threading.Thread(
         target=run_runtime_bootstrap_background,
