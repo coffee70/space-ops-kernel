@@ -48,6 +48,7 @@ BOOTSTRAP_UNITS = (
     "tool-registry-service",
     "tool-execution-service",
     "code-intelligence-service",
+    "code-indexer-worker",
     "context-retrieval-service",
     "agent-runtime-service",
     "platform-api-gateway",
