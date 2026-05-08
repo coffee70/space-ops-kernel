@@ -8,6 +8,8 @@ from app.models.runtime import (
     Deployment,
     DeploymentEvent,
     ManagedUnit,
+    RuntimeBootstrapRun,
+    RuntimeBootstrapUnit,
     UnitHealthSnapshot,
 )
 
@@ -19,5 +21,7 @@ __all__ = [
     "Deployment",
     "DeploymentEvent",
     "ManagedUnit",
+    "RuntimeBootstrapRun",
+    "RuntimeBootstrapUnit",
     "UnitHealthSnapshot",
 ]

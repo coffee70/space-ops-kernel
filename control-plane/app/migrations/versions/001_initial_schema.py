@@ -80,6 +80,40 @@ def upgrade() -> None:
     op.create_index("ix_unit_health_snapshots_deployment_id", "unit_health_snapshots", ["deployment_id"])
 
     op.create_table(
+        "runtime_bootstrap_runs",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
+        sa.Column("status", sa.String(length=64), nullable=False),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("failure_reason", sa.Text(), nullable=True),
+    )
+    op.create_index("ix_runtime_bootstrap_runs_status", "runtime_bootstrap_runs", ["status"])
+
+    op.create_table(
+        "runtime_bootstrap_units",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
+        sa.Column(
+            "run_id",
+            sa.Integer(),
+            sa.ForeignKey("runtime_bootstrap_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("unit_id", sa.String(length=255), nullable=False),
+        sa.Column("status", sa.String(length=64), nullable=False),
+        sa.Column("deployment_id", sa.String(length=64), nullable=True),
+        sa.Column("failure_reason", sa.Text(), nullable=True),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_index("ix_runtime_bootstrap_units_run_id", "runtime_bootstrap_units", ["run_id"])
+    op.create_index("ix_runtime_bootstrap_units_status", "runtime_bootstrap_units", ["status"])
+    op.create_index("ix_runtime_bootstrap_units_unit_id", "runtime_bootstrap_units", ["unit_id"])
+
+    op.create_table(
         "applications",
         sa.Column("application_id", sa.String(length=64), primary_key=True, nullable=False),
         sa.Column("title", sa.String(length=120), nullable=False),
@@ -249,6 +283,14 @@ def downgrade() -> None:
     op.drop_index("ix_unit_health_snapshots_deployment_id", table_name="unit_health_snapshots")
     op.drop_index("ix_unit_health_snapshots_unit_id", table_name="unit_health_snapshots")
     op.drop_table("unit_health_snapshots")
+
+    op.drop_index("ix_runtime_bootstrap_units_unit_id", table_name="runtime_bootstrap_units")
+    op.drop_index("ix_runtime_bootstrap_units_status", table_name="runtime_bootstrap_units")
+    op.drop_index("ix_runtime_bootstrap_units_run_id", table_name="runtime_bootstrap_units")
+    op.drop_table("runtime_bootstrap_units")
+
+    op.drop_index("ix_runtime_bootstrap_runs_status", table_name="runtime_bootstrap_runs")
+    op.drop_table("runtime_bootstrap_runs")
 
     op.drop_index("ix_deployment_events_deployment_id", table_name="deployment_events")
     op.drop_table("deployment_events")

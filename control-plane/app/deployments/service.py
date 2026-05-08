@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -87,10 +88,13 @@ class DeploymentService:
             return self._to_response(deployment.deployment_id)
 
     def _load_manifest(self, commit_sha: str, unit_id: str) -> UnitManifest:
-        temp_root = self.settings.deployment_workspaces_root / f"manifest-{unit_id}"
-        if temp_root.exists():
-            shutil.rmtree(temp_root)
-        temp_root.mkdir(parents=True, exist_ok=True)
+        self.settings.deployment_workspaces_root.mkdir(parents=True, exist_ok=True)
+        temp_root = Path(
+            tempfile.mkdtemp(
+                prefix=f"manifest-{unit_id}-",
+                dir=self.settings.deployment_workspaces_root,
+            )
+        )
         try:
             self.repository.materialize_commit(commit_sha, temp_root)
             manifest_path = temp_root / "manifests" / "units" / f"{unit_id}.yaml"

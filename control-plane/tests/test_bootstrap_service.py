@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def test_managed_fork_bootstrap_is_non_destructive_after_initial_import(control_plane_env: Path) -> None:
@@ -120,3 +121,86 @@ def test_runtime_bootstrapper_units_match_seed_manifest_inventory() -> None:
     manifest_unit_ids = tuple(sorted(path.stem for path in manifest_root.glob("*.yaml")))
 
     assert tuple(sorted(BOOTSTRAP_UNITS)) == manifest_unit_ids
+
+
+def test_runtime_bootstrapper_continues_after_failed_unit(monkeypatch) -> None:
+    from app.services import bootstrap_service
+    from app.services.bootstrap_service import RuntimeBootstrapper
+
+    attempted: list[str] = []
+
+    class DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def commit(self):
+            return None
+
+    class DummyDeploymentService:
+        def __init__(self, settings, repository, session):
+            return None
+
+        def submit(self, request, *, delete_eligible):
+            attempted.append(request.unit_id)
+            if request.unit_id == "bad-unit":
+                return SimpleNamespace(
+                    deployment_id="dep_bad",
+                    status="failed",
+                    failure_reason="synthetic failure",
+                )
+            return SimpleNamespace(deployment_id=f"dep_{request.unit_id}", status="healthy", failure_reason=None)
+
+    monkeypatch.setattr(bootstrap_service, "BOOTSTRAP_UNITS", ("bad-unit", "later-unit"))
+    monkeypatch.setattr(bootstrap_service, "ManagedGitRepository", lambda settings: SimpleNamespace(get_head_commit=lambda branch: "abc123"))
+    monkeypatch.setattr(bootstrap_service, "get_session_factory", lambda: lambda: DummySession())
+    monkeypatch.setattr(bootstrap_service, "DeploymentService", DummyDeploymentService)
+    monkeypatch.setattr(bootstrap_service, "RegistryService", lambda session: object())
+    bootstrapper = RuntimeBootstrapper(SimpleNamespace(main_worktree_dir=Path("/unused"), runtime_strategy="stub"))
+    monkeypatch.setattr(bootstrapper, "_current_deployment_id", lambda registry, service, unit_id, commit_sha: None)
+    monkeypatch.setattr(bootstrapper, "_bootstrap_source_exists", lambda service, unit_id, commit_sha: True)
+
+    result = bootstrapper.ensure_bootstrapped(fail_fast=False)
+
+    assert attempted == ["bad-unit", "later-unit"]
+    assert [(unit.unit_id, unit.status, unit.deployment_id) for unit in result.units] == [
+        ("bad-unit", "failed", "dep_bad"),
+        ("later-unit", "healthy", "dep_later-unit"),
+    ]
+
+
+def test_runtime_bootstrapper_records_current_and_skipped_units(monkeypatch) -> None:
+    from app.services import bootstrap_service
+    from app.services.bootstrap_service import RuntimeBootstrapper
+
+    class DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(bootstrap_service, "BOOTSTRAP_UNITS", ("current-unit", "missing-unit"))
+    monkeypatch.setattr(bootstrap_service, "ManagedGitRepository", lambda settings: SimpleNamespace(get_head_commit=lambda branch: "abc123"))
+    monkeypatch.setattr(bootstrap_service, "get_session_factory", lambda: lambda: DummySession())
+    monkeypatch.setattr(bootstrap_service, "DeploymentService", lambda settings, repository, session: object())
+    monkeypatch.setattr(bootstrap_service, "RegistryService", lambda session: object())
+    bootstrapper = RuntimeBootstrapper(SimpleNamespace(main_worktree_dir=Path("/unused"), runtime_strategy="stub"))
+    monkeypatch.setattr(
+        bootstrapper,
+        "_current_deployment_id",
+        lambda registry, service, unit_id, commit_sha: "dep_current" if unit_id == "current-unit" else None,
+    )
+    monkeypatch.setattr(bootstrapper, "_bootstrap_source_exists", lambda service, unit_id, commit_sha: False)
+
+    result = bootstrapper.ensure_bootstrapped(fail_fast=False)
+
+    assert [(unit.unit_id, unit.status, unit.deployment_id, unit.failure_reason) for unit in result.units] == [
+        ("current-unit", "current", "dep_current", None),
+        ("missing-unit", "skipped", None, "bootstrap source missing"),
+    ]
