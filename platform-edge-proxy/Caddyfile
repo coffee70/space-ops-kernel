@@ -38,6 +38,12 @@
 	handle /internal/runtime-services/* {
 		reverse_proxy control-plane:8100
 	}
+	handle /change-previews/* {
+		reverse_proxy control-plane:8100
+	}
+	handle /deployments/* {
+		reverse_proxy control-plane:8100
+	}
 
 	# Mission Control UI (App Router + static + remaining paths)
 	handle {

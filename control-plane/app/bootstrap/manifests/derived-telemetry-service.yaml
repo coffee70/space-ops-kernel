@@ -13,6 +13,7 @@ health:
   path: /health
   port: 8080
 discovery:
+  service_slug: derived-telemetry-service
   category: telemetry
   api_base_path: /api/derived-telemetry
   capability_tags:

@@ -38,10 +38,11 @@ def test_registry_services_returns_safe_service_catalog(client) -> None:
         "description",
         "capabilities",
     }
+    optional_deployment = {"branch", "commitSha"}
     keys = set(service)
     assert keys >= required
-    assert keys <= required | {"runtimeTarget"}
-    unknown = keys - required - {"runtimeTarget"}
+    assert keys <= required | {"runtimeTarget"} | optional_deployment
+    unknown = keys - required - {"runtimeTarget"} - optional_deployment
     assert not unknown
 
 
