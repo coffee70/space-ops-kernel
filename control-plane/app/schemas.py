@@ -489,6 +489,8 @@ class RegistryServiceResponse(BaseModel):
     runtime_template: str = Field(alias="runtimeTemplate")
     deployment_status: str = Field(alias="deploymentStatus")
     health_status: str = Field(alias="healthStatus")
+    branch: str | None = None
+    commit_sha: str | None = Field(default=None, alias="commitSha")
     category: str | None = None
     description: str | None = None
     capabilities: list[str] = Field(default_factory=list)
@@ -535,8 +537,15 @@ class RegistryUnitSummaryResponse(BaseModel):
     health_status: str = Field(alias="healthStatus")
     service_slug: str | None = Field(default=None, alias="serviceSlug")
     application_id: str | None = Field(default=None, alias="applicationId")
+    source_path: str | None = Field(default=None, alias="sourcePath", max_length=512)
+    capabilities: list[str] = Field(default_factory=list)
     category: str | None = None
     description: str | None = None
+
+    @field_validator("capabilities")
+    @classmethod
+    def validate_unit_capabilities(cls, value: list[str]) -> list[str]:
+        return PlatformApplicationDefinition.validate_capabilities(value)
 
     @field_validator("service_slug")
     @classmethod
@@ -570,3 +579,45 @@ class DeploymentRecordResponse(BaseModel):
     logs_url: str
     registered: bool
     failure_reason: str | None = None
+
+
+class ChangePreviewDeployRequest(BaseModel):
+    """Chat-native preview deploy adapter request."""
+
+    branch: str = Field(..., min_length=1, max_length=255)
+    commit_sha: str | None = Field(default=None, max_length=64)
+    target_unit_id: str = Field(..., min_length=1, max_length=255)
+    target_application_id: str | None = Field(default=None, max_length=64)
+    conversation_id: str | None = Field(default=None, max_length=128)
+    agent_run_id: str | None = Field(default=None, max_length=128)
+
+
+class ChangePreviewDeployResponse(DeploymentRecordResponse):
+    """Chat-native preview deploy adapter response."""
+
+    target_unit_id: str
+    target_application_id: str | None = None
+    conversation_id: str | None = None
+    agent_run_id: str | None = None
+
+
+class ChangePreviewRevertRequest(BaseModel):
+    """Chat-native preview revert adapter request."""
+
+    target_unit_id: str = Field(..., min_length=1, max_length=255)
+    target_application_id: str | None = Field(default=None, max_length=64)
+    baseline_branch: str = Field(default="main", min_length=1, max_length=255)
+    baseline_commit_sha: str | None = Field(default=None, max_length=64)
+    preview_deployment_id: str | None = Field(default=None, max_length=64)
+    conversation_id: str | None = Field(default=None, max_length=128)
+    agent_run_id: str | None = Field(default=None, max_length=128)
+
+
+class ChangePreviewRevertResponse(DeploymentRecordResponse):
+    """Chat-native preview revert adapter response."""
+
+    target_unit_id: str
+    target_application_id: str | None = None
+    conversation_id: str | None = None
+    agent_run_id: str | None = None
+    preview_deployment_id: str | None = None

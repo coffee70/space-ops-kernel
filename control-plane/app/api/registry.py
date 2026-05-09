@@ -89,15 +89,29 @@ def _safe_discovery_capabilities(discovery: dict) -> list[str]:
     return safe
 
 
+def _active_deployment_branch_commit(registry: RegistryService, unit_id: str) -> tuple[str | None, str | None]:
+    deployment = registry.get_active_deployment_for_unit(unit_id)
+    if deployment is None:
+        deployment = registry.get_latest_deployment_for_unit(unit_id)
+    if deployment is None:
+        return None, None
+    return deployment.branch, deployment.commit_sha
+
+
 def _serialize_service(
     unit: ManagedUnit,
     *,
+    registry: RegistryService | None = None,
     runtime_target: RuntimeTransportDebug | None = None,
 ) -> RegistryServiceResponse:
     discovery = unit.discovery_metadata_json if isinstance(unit.discovery_metadata_json, dict) else {}
     service_slug = discovery.get("service_slug")
     if not isinstance(service_slug, str) or not SERVICE_SLUG_PATTERN.fullmatch(service_slug):
         service_slug = unit.unit_id
+    branch: str | None = None
+    commit_sha: str | None = None
+    if registry is not None:
+        branch, commit_sha = _active_deployment_branch_commit(registry, unit.unit_id)
     return RegistryServiceResponse(
         serviceSlug=service_slug,
         unitId=unit.unit_id,
@@ -107,6 +121,8 @@ def _serialize_service(
         runtimeTemplate=unit.runtime_template,
         deploymentStatus=unit.deployment_status,
         healthStatus=unit.health_status,
+        branch=branch,
+        commitSha=commit_sha,
         category=_safe_discovery_text(discovery, "category"),
         description=_safe_discovery_text(discovery, "description"),
         capabilities=_safe_discovery_capabilities(discovery),
@@ -114,8 +130,8 @@ def _serialize_service(
     )
 
 
-def _serialize_services(units: Iterable[ManagedUnit]) -> list[RegistryServiceResponse]:
-    return [_serialize_service(unit) for unit in units]
+def _serialize_services(units: Iterable[ManagedUnit], registry: RegistryService) -> list[RegistryServiceResponse]:
+    return [_serialize_service(unit, registry=registry) for unit in units]
 
 
 def _serialize_unit_summary(unit: ManagedUnit, registry: RegistryService) -> RegistryUnitSummaryResponse:
@@ -140,6 +156,8 @@ def _serialize_unit_summary(unit: ManagedUnit, registry: RegistryService) -> Reg
         health_status=unit.health_status,
         service_slug=service_slug,
         application_id=application_id,
+        source_path=unit.source_path,
+        capabilities=_safe_discovery_capabilities(discovery),
         category=_safe_discovery_text(discovery, "category"),
         description=_safe_discovery_text(discovery, "description"),
     )
@@ -212,7 +230,7 @@ def get_services(
         raise HTTPException(status_code=400, detail="includeRuntimeTransport is not allowed in production")
     units = registry.get_units(kind="service")
     if not include_runtime_transport:
-        return _serialize_services(units)
+        return _serialize_services(units, registry)
 
     payloads: list[RegistryServiceResponse] = []
     for unit in units:
@@ -228,7 +246,7 @@ def get_services(
                 )
         except Exception:
             runtime_target = None
-        payloads.append(_serialize_service(unit, runtime_target=runtime_target))
+        payloads.append(_serialize_service(unit, registry=registry, runtime_target=runtime_target))
     return payloads
 
 
@@ -296,7 +314,7 @@ def get_service(service_slug: str, session: Session = Depends(get_db)) -> Regist
     unit = _find_service_by_slug(registry.get_units(kind="service"), service_slug)
     if unit is None:
         raise HTTPException(status_code=404, detail="service not found")
-    return _serialize_service(unit)
+    return _serialize_service(unit, registry=registry)
 
 
 def _get_runtime_ref_for_application(registry: RegistryService, application_id: str) -> RuntimeRef:
@@ -345,6 +363,7 @@ async def _proxy_request(
     strip_sensitive_headers: bool = False,
     *,
     proxy_target_label: str | None = None,
+    read_timeout_seconds: float | None = None,
 ) -> Response:
     try:
         validated_path = validate_runtime_path(path)
@@ -358,10 +377,11 @@ async def _proxy_request(
     headers = {key: value for key, value in request.headers.items() if key.lower() not in stripped_headers}
     body = await request.body()
     settings = get_settings()
+    read_seconds = settings.runtime_proxy_read_timeout_seconds if read_timeout_seconds is None else read_timeout_seconds
     timeout = httpx.Timeout(
         connect=settings.runtime_proxy_connect_timeout_seconds,
-        read=settings.runtime_proxy_read_timeout_seconds,
-        write=settings.runtime_proxy_read_timeout_seconds,
+        read=read_seconds,
+        write=read_seconds,
         pool=2.0,
     )
     label = proxy_target_label or runtime_ref.service_name
@@ -490,6 +510,11 @@ async def proxy_runtime_service(
         )
     runtime_ref = _get_runtime_ref_for_unit(registry, unit)
     raw_path = _extract_raw_proxy_path(request, f"/internal/runtime-services/{service_slug}")
+    settings = get_settings()
+    normalized_path = (path or "").strip().strip("/")
+    read_override: float | None = None
+    if service_slug == "agent-runtime-service" and normalized_path == "chat" and request.method.upper() == "POST":
+        read_override = max(settings.runtime_proxy_read_timeout_seconds, 300.0)
     return await _proxy_request(
         runtime_ref,
         request,
@@ -497,4 +522,5 @@ async def proxy_runtime_service(
         raw_path=raw_path,
         strip_sensitive_headers=True,
         proxy_target_label=f"service:{service_slug}",
+        read_timeout_seconds=read_override,
     )

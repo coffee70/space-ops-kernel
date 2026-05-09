@@ -121,7 +121,17 @@ def create_branch(
             branch_record.created_commit_sha = commit_sha
             branch_record.updated_at = utcnow()
         session.flush()
-        return Envelope(branch=request.branch, commit_sha=commit_sha, changed_files=[], data={"created": True})
+        return Envelope(
+            branch=request.branch,
+            commit_sha=commit_sha,
+            changed_files=[],
+            data={
+                "created": True,
+                "base_branch": request.from_branch,
+                "base_commit_sha": base_commit_sha,
+                "branch_existed_before": branch_exists_before,
+            },
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
