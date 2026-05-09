@@ -15,6 +15,7 @@ import app.config
 from app.db import get_db
 from app.deployments.service import DeploymentService
 from app.git.repository import ManagedGitRepository
+from app.models.runtime import ApplicationDeployment
 from app.registry.service import RegistryService
 from app.schemas import (
     ChangePreviewDeployRequest,
@@ -75,8 +76,44 @@ def revert_change_preview(
     session: Session = Depends(get_db),
 ) -> ChangePreviewRevertResponse:
     registry = RegistryService(session)
-    if request.preview_deployment_id and registry.get_deployment(request.preview_deployment_id) is None:
-        raise HTTPException(status_code=404, detail="preview deployment not found")
+    if request.preview_deployment_id:
+        preview_deployment = registry.get_deployment(request.preview_deployment_id)
+        if preview_deployment is None:
+            raise HTTPException(status_code=404, detail="preview deployment not found")
+        if preview_deployment.unit_id != request.target_unit_id:
+            # The chat experience must not allow reverting deployment A while
+            # claiming it restores unit B. Mismatch is a client-side correctness
+            # bug, not a missing record, so 400 is the right status here.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "preview_deployment_unit_mismatch",
+                    "message": "preview deployment does not belong to the requested target unit",
+                    "preview_deployment_id": request.preview_deployment_id,
+                    "preview_unit_id": preview_deployment.unit_id,
+                    "requested_target_unit_id": request.target_unit_id,
+                },
+            )
+        if request.target_application_id is not None:
+            unit = registry.get_unit(preview_deployment.unit_id)
+            if unit is not None and unit.runtime_kind == "frontend_application":
+                application_deployment = (
+                    session.get(ApplicationDeployment, preview_deployment.deployment_id)
+                )
+                if (
+                    application_deployment is not None
+                    and application_deployment.application_id != request.target_application_id
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error_code": "preview_deployment_application_mismatch",
+                            "message": "preview deployment does not belong to the requested target application",
+                            "preview_deployment_id": request.preview_deployment_id,
+                            "preview_application_id": application_deployment.application_id,
+                            "requested_target_application_id": request.target_application_id,
+                        },
+                    )
 
     try:
         record = service.submit(

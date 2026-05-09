@@ -537,8 +537,15 @@ class RegistryUnitSummaryResponse(BaseModel):
     health_status: str = Field(alias="healthStatus")
     service_slug: str | None = Field(default=None, alias="serviceSlug")
     application_id: str | None = Field(default=None, alias="applicationId")
+    source_path: str | None = Field(default=None, alias="sourcePath", max_length=512)
+    capabilities: list[str] = Field(default_factory=list)
     category: str | None = None
     description: str | None = None
+
+    @field_validator("capabilities")
+    @classmethod
+    def validate_unit_capabilities(cls, value: list[str]) -> list[str]:
+        return PlatformApplicationDefinition.validate_capabilities(value)
 
     @field_validator("service_slug")
     @classmethod

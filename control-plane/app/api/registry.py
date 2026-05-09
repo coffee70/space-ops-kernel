@@ -156,6 +156,8 @@ def _serialize_unit_summary(unit: ManagedUnit, registry: RegistryService) -> Reg
         health_status=unit.health_status,
         service_slug=service_slug,
         application_id=application_id,
+        source_path=unit.source_path,
+        capabilities=_safe_discovery_capabilities(discovery),
         category=_safe_discovery_text(discovery, "category"),
         description=_safe_discovery_text(discovery, "description"),
     )
