@@ -110,15 +110,15 @@ services:
       context: ../space-ops-apps/mission-control-ui
       dockerfile: Dockerfile
       args:
-        # Browser must reach platform-api from the host (Mission Control UI is static/CSR from :3000).
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-        NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
+        # Empty = same-origin via edge proxy (:8080). Set in .env only for raw MC on :3000 without the proxy.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-}
     container_name: telemetry-mission-control-ui
     ports:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
-      NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
+      NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-}
       API_SERVER_URL: http://platform-api:8000
       CONTROL_PLANE_SERVER_URL: http://control-plane:8100
     depends_on:

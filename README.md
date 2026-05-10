@@ -38,13 +38,19 @@ docker compose up -d
 
 **Official browser entrypoint (Layer 1 edge proxy):** open Mission Control at **`http://localhost:8080`**.
 
-**Environment:** copy [`.env.example`](./.env.example) to `.env` (gitignored) and set `OPENAI_API_KEY` and related variables. Compose passes `NEXT_PUBLIC_*` into the Mission Control build so the browser can reach `platform-api` when you open the raw UI on port **3000** (defaults to `http://localhost:8000`). To force same-origin API paths only (no absolute base), set `NEXT_PUBLIC_API_URL=` in `.env` and rebuild Mission Control.
+**Environment:** copy [`.env.example`](./.env.example) to `.env` (gitignored). By default **`NEXT_PUBLIC_API_URL` is empty**: the Mission Control bundle uses **same-origin** paths (`/intelligence/*`, `/telemetry/*`, …) so requests flow through **`http://localhost:8080`** (edge proxy). Set `OPENAI_API_KEY` as needed.
+
+**Browser modes**
+
+1. **Edge proxy / normal demo (recommended):** open **`http://localhost:8080`**. Leave `NEXT_PUBLIC_API_URL` unset or empty and rebuild Mission Control after changing `.env` so the client bundle is not baked with an old absolute API host.
+
+2. **Direct frontend dev:** open **`http://localhost:3000`** and set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in `.env` so the browser can reach `platform-api` without the edge proxy.
 
 Agent-runtime loads `models.local.yaml` when present (gitignored, instantiation-specific), otherwise falls back to the committed template `space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example` — copy it to `models.local.yaml` to customize.
 
-**Debug / direct service ports (not the full same-origin stack on UI alone):**
+**Debug / direct service ports**
 
-- Raw Mission Control UI only: `http://localhost:3000` — Next.js alone; ensure `NEXT_PUBLIC_API_URL` targets `http://localhost:8000` (Compose default) so `/intelligence/*` calls reach the gateway. Prefer **`http://localhost:8080`** for the full same-origin stack.
+- Raw Mission Control UI only: `http://localhost:3000` — use **`NEXT_PUBLIC_API_URL=http://localhost:8000`** as above, or prefer **`http://localhost:8080`** for same-origin API paths.
 - Raw `platform-api`: `http://localhost:8000`
 - Raw `control-plane`: `http://localhost:8100`
 
