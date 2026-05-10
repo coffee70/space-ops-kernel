@@ -110,8 +110,8 @@ services:
       context: ../space-ops-apps/mission-control-ui
       dockerfile: Dockerfile
       args:
-        # Official path: use Layer 1 edge proxy (same-origin relative API routes). Raw :3000 is UI/debug only.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        # Browser must reach platform-api from the host (Mission Control UI is static/CSR from :3000).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
         NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-http://localhost:8100}
     container_name: telemetry-mission-control-ui
     ports:
