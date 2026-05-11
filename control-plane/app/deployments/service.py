@@ -28,6 +28,19 @@ from app.services.proxy_targets import build_runtime_health_url
 from app.services.shell import run_command
 
 
+def _compose_safe_run_command(run_command: str) -> Any:
+    """Return command as a Compose exec list for common `sh -c "..."` manifests.
+
+    YAML safe_dump folds long quoted strings awkwardly (newlines inside sh -c), which breaks deployments.
+    """
+    trimmed = run_command.strip()
+    prefix = 'sh -c "'
+    if trimmed.startswith(prefix) and trimmed.endswith('"') and len(trimmed) >= len(prefix) + 2:
+        inner_script = trimmed[len(prefix) : -1]
+        return ["sh", "-c", inner_script]
+    return run_command
+
+
 class DeploymentService:
     """Turn managed fork commits into running capabilities."""
 
@@ -302,7 +315,7 @@ class DeploymentService:
                 "context": str(self._build_context_path(manifest, source_root)),
                 "dockerfile": self._build_dockerfile_path(manifest),
             },
-            "command": manifest.run.command,
+            "command": _compose_safe_run_command(manifest.run.command),
             "environment": self._build_runtime_env(manifest, service_name),
         }
         volume_entries = self._compose_volume_entries(manifest)

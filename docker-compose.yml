@@ -67,6 +67,8 @@ services:
       - "8100:8100"
     environment:
       DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/control_plane_db
+      # Bind-mount parent of repos so workspace_root resolves to /workspace/space-ops-kernel/... (aligned with split-checkout layout).
+      WORKSPACE_ROOT: /workspace
       RUNTIME_ROOT: /app/kernel/runtime
       PLATFORM_SOURCE_ROOT: /imports/space-ops-platform
       APPS_SOURCE_ROOT: /imports/space-ops-apps
@@ -86,6 +88,7 @@ services:
       PLATFORM_SATNOGS_ADAPTER_CONFIG: app/adapters/satnogs/config.example.yaml
       PLATFORM_SATNOGS_DLQ_ROOT: /app/runtime/satnogs-adapter/dlq
     volumes:
+      - ../:/workspace:rw
       - ./:/app/kernel
       - ../space-ops-platform:/imports/space-ops-platform:ro
       - ../space-ops-apps:/imports/space-ops-apps:ro

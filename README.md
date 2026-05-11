@@ -153,6 +153,8 @@ Compose builds service images from sibling repositories:
 - `../space-ops-apps/mission-control-ui` for `mission-control-ui`
 SatNOGS and the telemetry simulators are deployed as managed Layer 2 services from `../space-ops-platform`.
 
+The **`control-plane`** service mounts the split-checkout parent directory (`../`) at **`/workspace`** and sets **`WORKSPACE_ROOT=/workspace`**, matching the on-disk layout `workspace/space-ops-kernel`, `workspace/space-ops-platform`, etc. That keeps managed Docker bind mounts (for example `space-ops-kernel/runtime/model-registry` for the shared model registry file) aligned with paths the control plane seeds on disk.
+
 Managed platform services read vehicle configuration resources from `/app/platform/backend/resources/vehicle-configurations`.
 
 Common environment values:
