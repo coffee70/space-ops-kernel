@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     platform_satnogs_adapter_config: str = "app/adapters/satnogs/config.example.yaml"
     platform_satnogs_dlq_root: str = "/app/runtime/satnogs-adapter/dlq"
     workspace_root: Path = Field(default_factory=default_workspace_root)
+    docker_host_workspace_root: Path | None = None
     runtime_root: Path | None = None
     platform_source_root: Path | None = None
     apps_source_root: Path | None = None

@@ -41,6 +41,32 @@ def _compose_safe_run_command(run_command: str) -> Any:
     return run_command
 
 
+def _decode_mountinfo_path(value: str) -> Path:
+    """Decode the small set of mountinfo escapes relevant to path fields."""
+
+    return Path(
+        value.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+    )
+
+
+def _docker_desktop_host_path(source: str, root: str) -> Path | None:
+    """Translate Docker Desktop's /run/host_mark source notation to a host path."""
+
+    marker = "/run/host_mark"
+    if not source.startswith(marker):
+        return None
+    source_without_marker = source[len(marker) :]
+    if "[" not in source_without_marker or not source_without_marker.endswith("]"):
+        host_prefix = _decode_mountinfo_path(source_without_marker)
+        host_root = _decode_mountinfo_path(root).relative_to("/")
+        return (host_prefix / host_root).resolve()
+    prefix, suffix = source_without_marker.split("[", 1)
+    return _decode_mountinfo_path(f"{prefix}{suffix[:-1]}")
+
+
 class DeploymentService:
     """Turn managed fork commits into running capabilities."""
 
@@ -331,6 +357,7 @@ class DeploymentService:
         """Bind-mount declared host paths into the service (paths relative to generated compose dir)."""
 
         workspace_root = self.settings.workspace_root.resolve()
+        docker_host_workspace_root = self._docker_host_workspace_root(workspace_root)
         compose_dir = self.settings.generated_compose_root
         compose_dir.mkdir(parents=True, exist_ok=True)
         compose_resolved = compose_dir.resolve()
@@ -344,10 +371,57 @@ class DeploymentService:
                 raise ValueError(f"mount source resolves outside workspace_root: {mount.source}") from exc
             if not host_path.is_dir():
                 continue
-            rel_host = Path(os.path.relpath(str(host_path), str(compose_resolved))).as_posix()
+            if docker_host_workspace_root is None:
+                compose_host = Path(os.path.relpath(str(host_path), str(compose_resolved))).as_posix()
+            else:
+                mount_relpath = host_path.relative_to(workspace_root)
+                compose_host = str((docker_host_workspace_root / mount_relpath).resolve())
             mode = "ro" if mount.read_only else "rw"
-            entries.append(f"{rel_host}:{mount.target}:{mode}")
+            entries.append(f"{compose_host}:{mount.target}:{mode}")
         return entries
+
+    def _docker_host_workspace_root(self, workspace_root: Path) -> Path | None:
+        """Return a Docker-daemon-visible host path for workspace_root when known.
+
+        The control-plane often runs inside a container while talking to the host Docker
+        daemon. Compose can tar build contexts from the container, but bind mount
+        sources must be paths the host daemon can access.
+        """
+
+        configured = self.settings.docker_host_workspace_root
+        if configured is not None:
+            return configured.resolve()
+
+        try:
+            mountinfo = Path("/proc/self/mountinfo").read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+        best_target: Path | None = None
+        best_source: Path | None = None
+        for line in mountinfo.splitlines():
+            try:
+                left, right = line.split(" - ", 1)
+                fields = left.split()
+                mount_root = fields[3]
+                mount_point = _decode_mountinfo_path(fields[4]).resolve()
+                source_field = right.split()[1]
+            except (IndexError, ValueError):
+                continue
+            try:
+                workspace_root.relative_to(mount_point)
+            except ValueError:
+                continue
+            source_path = _docker_desktop_host_path(source_field, mount_root) or _decode_mountinfo_path(
+                source_field
+            )
+            if best_target is None or len(mount_point.parts) > len(best_target.parts):
+                best_target = mount_point
+                best_source = source_path
+
+        if best_target is None or best_source is None:
+            return None
+        return (best_source / workspace_root.relative_to(best_target)).resolve()
 
     def _build_context_path(self, manifest: UnitManifest, source_root: Path) -> Path:
         if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":
