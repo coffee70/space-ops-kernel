@@ -254,6 +254,11 @@ class DeploymentService:
                     "NATS_URL": self.settings.platform_nats_url,
                 }
             )
+            shared_models_path = self.settings.platform_models_local_yaml_container_path
+            if manifest.unit_id == "ai-engineer-model-config-service":
+                env["AI_ENGINEER_MODELS_CONFIG_PATH"] = shared_models_path
+            if manifest.unit_id == "agent-runtime-service":
+                env["AGENT_RUNTIME_MODELS_CONFIG_PATH"] = shared_models_path
             if manifest.unit_id == "satnogs-adapter-service":
                 env.update(
                     {

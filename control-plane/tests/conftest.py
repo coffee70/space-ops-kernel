@@ -121,12 +121,12 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         ),
     )
     _write(
-        apps_root / "mission-control-ui/src/applications/sources/application.seed.json",
+        apps_root / "mission-control-ui/src/applications/control-panel/application.seed.json",
         (
-            '{"applicationId":"sources","title":"Sources","description":"Source registry and configuration tools.",'
-            '"iconKey":"server","iconColor":"#fb7185","iconBackground":"rgba(251, 113, 133, 0.16)",'
-            '"applicationType":"native","routePath":"/apps/sources","loaderKey":"sources","version":"0.1.0",'
-            '"enabled":true,"sortOrder":40,"owner":"space-ops-apps","capabilities":["source-management"]}'
+            '{"applicationId":"control-panel","title":"Control Panel","description":"Source registry, vehicle configuration, and AI Engineer control settings.",'
+            '"iconKey":"settings","iconColor":"#fb7185","iconBackground":"rgba(251, 113, 133, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/control-panel","loaderKey":"control-panel","version":"0.1.0",'
+            '"enabled":true,"sortOrder":40,"owner":"space-ops-apps","capabilities":["source-management","vehicle-configuration","ai-engineer-configuration"]}'
         ),
     )
     _write(

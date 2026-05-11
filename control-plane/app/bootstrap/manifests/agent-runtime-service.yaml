@@ -12,6 +12,10 @@ health:
   type: http
   path: /health
   port: 8080
+mounts:
+  - source: space-ops-kernel/runtime/model-registry
+    target: /app/shared-model-registry
+    read_only: false
 discovery:
   service_slug: agent-runtime-service
   category: intelligence

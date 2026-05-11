@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"
     platform_vehicle_config_root: str = "/app/platform/backend/resources/vehicle-configurations"
+    #: Host-side directory (relative to workspace_root) shared by ai-engineer-model-config and agent-runtime for models.local.yaml
+    platform_models_registry_host_relpath: str = "space-ops-kernel/runtime/model-registry"
+    #: Bind mount target inside platform service containers (must match manifest `mounts` targets)
+    platform_models_registry_container_dir: str = "/app/shared-model-registry"
+    platform_models_registry_filename: str = "models.local.yaml"
     platform_satnogs_api_token: str = ""
     platform_satnogs_live_enabled: str = "false"
     platform_satnogs_adapter_config: str = "app/adapters/satnogs/config.example.yaml"
@@ -130,6 +135,13 @@ class Settings(BaseSettings):
         return self.resolved_apps_source_root / "vehicle-configurations"
 
     @property
+    def platform_models_local_yaml_container_path(self) -> str:
+        """Same logical file path used by AI_ENGINEER_MODELS_CONFIG_PATH and AGENT_RUNTIME_MODELS_CONFIG_PATH."""
+
+        base = self.platform_models_registry_container_dir.rstrip("/")
+        return f"{base}/{self.platform_models_registry_filename}"
+
+    @property
     def resolved_database_url(self) -> str:
         return self.database_url
 
@@ -159,6 +171,7 @@ class Settings(BaseSettings):
             self.generated_compose_root,
             self.generated_env_root,
             self.deployment_logs_root,
+            self.workspace_root / self.platform_models_registry_host_relpath,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
