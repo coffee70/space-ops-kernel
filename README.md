@@ -46,7 +46,7 @@ docker compose up -d
 
 2. **Direct frontend dev:** open **`http://localhost:3000`** and set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in `.env` so the browser can reach `platform-api` without the edge proxy.
 
-Agent-runtime loads `models.local.yaml` when present (gitignored, instantiation-specific), otherwise falls back to the committed template `space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example` — copy it to `models.local.yaml` to customize.
+On startup the control-plane ensures `space-ops-kernel/runtime/model-registry/models.local.yaml` exists when missing by copying `space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example` (the same blob agent-runtime validates against); existing files are never overwritten. Both the AI Engineer model-config service and agent-runtime mounted stack read that shared path (`AGENT_RUNTIME_MODELS_CONFIG_PATH` / `AI_ENGINEER_MODELS_CONFIG_PATH`).
 
 **Debug / direct service ports**
 

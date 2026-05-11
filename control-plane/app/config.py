@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -160,6 +161,32 @@ class Settings(BaseSettings):
     def get_cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    def ensure_model_registry_file(self) -> None:
+        """Ensure shared host models.local.yaml exists by copying from the platform example when missing."""
+
+        target_dir = self.workspace_root / self.platform_models_registry_host_relpath
+        target_path = target_dir / self.platform_models_registry_filename
+        example_path = (
+            self.resolved_platform_source_root
+            / "backend"
+            / "services"
+            / "agent-runtime-service"
+            / "config"
+            / "models.local.yaml.example"
+        )
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        if target_path.exists():
+            return
+
+        if not example_path.is_file():
+            raise FileNotFoundError(
+                f"Model registry seed not found at {example_path}; cannot create {target_path}"
+            )
+
+        shutil.copyfile(example_path, target_path)
+
     def ensure_runtime_dirs(self) -> None:
         for path in (
             self.resolved_runtime_root,
@@ -174,6 +201,8 @@ class Settings(BaseSettings):
             self.workspace_root / self.platform_models_registry_host_relpath,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+        self.ensure_model_registry_file()
 
 
 @lru_cache

@@ -80,6 +80,28 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     _write(platform_root / "README.md", "platform")
+    # Minimal example so Settings.ensure_runtime_dirs() can seed models.local.yaml into the runtime mount dir.
+    _write(
+        platform_root / "backend/services/agent-runtime-service/config/models.local.yaml.example",
+        """version: 1
+defaults:
+  chatModel: m1
+  codingModel: m1
+  fastModel: m1
+  restrictedModel: m1
+providers:
+  p1:
+    type: openai
+    displayName: OpenAI
+    apiKeyEnv: OPENAI_API_KEY
+models:
+  - id: m1
+    providerRef: p1
+    providerModelId: gpt-4o-mini
+    enabled: true
+    defaultFor: [chat, coding, fast]
+""",
+    )
     _write(apps_root / "README.md", "apps")
     _write(
         platform_root / "backend/services/derived-telemetry-service/requirements.txt",
