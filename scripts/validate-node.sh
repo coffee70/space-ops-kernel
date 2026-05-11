@@ -37,6 +37,13 @@ docker run --rm \
     npm test
 
     echo
+    echo "==> space-ops-platform/backend/services/model-registry-service"
+    cd /workspace/space-ops-platform/backend/services/model-registry-service
+    npm ci
+    npm run build
+    npm test
+
+    echo
     echo "==> space-ops-apps/mission-control-ui"
     cd /workspace/space-ops-apps/mission-control-ui
     npm ci

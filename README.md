@@ -46,7 +46,7 @@ docker compose up -d
 
 2. **Direct frontend dev:** open **`http://localhost:3000`** and set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in `.env` so the browser can reach `platform-api` without the edge proxy.
 
-On startup the control-plane ensures `space-ops-kernel/runtime/model-registry/models.local.yaml` exists when missing by copying `space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example` (the same blob agent-runtime validates); existing files are never overwritten. **agent-runtime-service** owns authoritative registry validation and runtime catalog semantics; **model-config-service** edits that same file (`MODEL_CONFIG_PATH` / `AGENT_RUNTIME_MODELS_CONFIG_PATH`) and delegates validation to agent-runtime (`POST /models/validate-config`).
+On startup the control-plane ensures `space-ops-kernel/runtime/model-registry/models.local.yaml` exists when missing by copying `space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example` (the same blob model-registry-service validates); existing files are never overwritten. **model-registry-service** owns registry validation + model catalog semantics; **agent-runtime-service** consumes the model catalog over HTTP.
 
 **Debug / direct service ports**
 

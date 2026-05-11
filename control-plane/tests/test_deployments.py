@@ -511,16 +511,16 @@ def test_compose_mount_uses_docker_host_workspace_root(control_plane_env: Path) 
     service = DeploymentService(settings, object(), object())
     payload = service._build_compose_payload(
         manifest=UnitManifest(
-            unit_id="model-config-service",
-            display_name="Model Config Service",
+            unit_id="model-registry-service",
+            display_name="Model Registry Service",
             package_owner="space-ops-platform",
             runtime_kind="service",
-            runtime_template="python-service",
+            runtime_template="node-service",
             source_path="project/space-ops-platform",
             build=BuildSpec(command="pip install -r requirements.txt"),
-            run=RunSpec(command="uvicorn app:app --host 0.0.0.0 --port 8080"),
+            run=RunSpec(command="node dist/server.js"),
             health=HealthSpec(type="http", path="/health", port=8080),
-            discovery={"service_slug": "model-config-service"},
+            discovery={"service_slug": "model-registry-service"},
             mounts=[
                 VolumeMountSpec(
                     source="space-ops-kernel/runtime/model-registry",
@@ -530,7 +530,7 @@ def test_compose_mount_uses_docker_host_workspace_root(control_plane_env: Path) 
             ],
         ),
         source_root=source_root,
-        service_name="model-config-service-preview",
+        service_name="model-registry-service-preview",
         env_path=workspace_root / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
     )
     spec = next(iter(payload["services"].values()))
