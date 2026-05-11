@@ -268,8 +268,10 @@ class DeploymentService:
                 }
             )
             shared_models_path = self.settings.platform_models_local_yaml_container_path
-            if manifest.unit_id == "ai-engineer-model-config-service":
-                env["AI_ENGINEER_MODELS_CONFIG_PATH"] = shared_models_path
+            if manifest.unit_id == "model-config-service":
+                env["MODEL_CONFIG_PATH"] = shared_models_path
+                cp_base = self.settings.platform_control_plane_url.rstrip("/")
+                env["AGENT_RUNTIME_BASE_URL"] = f"{cp_base}/internal/runtime-services/agent-runtime-service"
             if manifest.unit_id == "agent-runtime-service":
                 env["AGENT_RUNTIME_MODELS_CONFIG_PATH"] = shared_models_path
             if manifest.unit_id == "satnogs-adapter-service":

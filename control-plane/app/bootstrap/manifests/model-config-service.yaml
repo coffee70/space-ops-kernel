@@ -1,5 +1,5 @@
-unit_id: ai-engineer-model-config-service
-display_name: AI Engineer Model Config Service
+unit_id: model-config-service
+display_name: Model Config Service
 package_owner: space-ops-platform
 runtime_kind: service
 runtime_template: python-service
@@ -7,7 +7,7 @@ source_path: project/space-ops-platform
 build:
   command: pip install -r requirements.txt
 run:
-  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/ai-engineer-model-config-service --host 0.0.0.0 --port 8080"
+  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/model-config-service --host 0.0.0.0 --port 8080"
 health:
   type: http
   path: /health
@@ -17,12 +17,13 @@ mounts:
     target: /app/shared-model-registry
     read_only: false
 discovery:
-  service_slug: ai-engineer-model-config-service
+  service_slug: model-config-service
   category: intelligence
   api_base_path: /model-config
   capability_tags:
-    - ai-engineer-configuration
-    - model-registry
+    - model-configuration
+    - model-registry-config
   health_endpoint: /health
   visibility: internal
-  depends_on: []
+  depends_on:
+    - agent-runtime-service

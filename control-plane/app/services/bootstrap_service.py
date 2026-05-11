@@ -56,8 +56,8 @@ BOOTSTRAP_UNITS = (
     "code-intelligence-service",
     "code-indexer-worker",
     "context-retrieval-service",
-    "ai-engineer-model-config-service",
     "agent-runtime-service",
+    "model-config-service",
     "platform-api-gateway",
     "derived-telemetry-service",
 )

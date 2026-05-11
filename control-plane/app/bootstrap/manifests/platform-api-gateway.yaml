@@ -22,7 +22,7 @@ discovery:
   health_endpoint: /health
   visibility: public
   depends_on:
-    - ai-engineer-model-config-service
+    - model-config-service
     - vehicle-config-service
     - source-registry-service
     - simulator-control-service
