@@ -10,7 +10,7 @@ from app.config import Settings
 def test_ensure_runtime_dirs_seeds_model_registry_file(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     platform_example = (
-        workspace / "space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example"
+        workspace / "space-ops-platform/backend/services/model-registry-service/config/models.local.yaml.example"
     )
     platform_example.parent.mkdir(parents=True, exist_ok=True)
     platform_example.write_text("version: 1\n", encoding="utf-8")
@@ -29,7 +29,7 @@ def test_ensure_runtime_dirs_does_not_overwrite_existing_model_registry_file(tmp
     target.write_text("custom: true\n", encoding="utf-8")
 
     platform_example = (
-        workspace / "space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example"
+        workspace / "space-ops-platform/backend/services/model-registry-service/config/models.local.yaml.example"
     )
     platform_example.parent.mkdir(parents=True, exist_ok=True)
     platform_example.write_text("version: 1\n", encoding="utf-8")
@@ -57,4 +57,3 @@ def test_ensure_model_registry_file_raises_when_example_missing(tmp_path: Path) 
         assert "models.local.yaml.example" in str(exc)
     else:
         raise AssertionError("expected FileNotFoundError when example file is missing")
-

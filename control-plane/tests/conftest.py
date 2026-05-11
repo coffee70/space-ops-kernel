@@ -82,7 +82,7 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write(platform_root / "README.md", "platform")
     # Minimal example so Settings.ensure_runtime_dirs() can seed models.local.yaml into the runtime mount dir.
     _write(
-        platform_root / "backend/services/agent-runtime-service/config/models.local.yaml.example",
+        platform_root / "backend/services/model-registry-service/config/models.local.yaml.example",
         """version: 1
 defaults:
   chatModel: m1

@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"
     platform_vehicle_config_root: str = "/app/platform/backend/resources/vehicle-configurations"
-    #: Host-side directory (relative to workspace_root) shared by model-registry-service and agent-runtime for models.local.yaml
+    #: Host-side directory (relative to workspace_root) mounted into model-registry-service for models.local.yaml
     platform_models_registry_host_relpath: str = "space-ops-kernel/runtime/model-registry"
     #: Bind mount target inside platform service containers (must match manifest `mounts` targets)
     platform_models_registry_container_dir: str = "/app/shared-model-registry"
@@ -138,7 +138,7 @@ class Settings(BaseSettings):
 
     @property
     def platform_models_local_yaml_container_path(self) -> str:
-        """Same logical file path used by MODEL_CONFIG_PATH and AGENT_RUNTIME_MODELS_CONFIG_PATH (and legacy AI_ENGINEER_MODELS_CONFIG_PATH)."""
+        """Container path used by model-registry-service MODEL_CONFIG_PATH."""
 
         base = self.platform_models_registry_container_dir.rstrip("/")
         return f"{base}/{self.platform_models_registry_filename}"
@@ -171,7 +171,7 @@ class Settings(BaseSettings):
             self.resolved_platform_source_root
             / "backend"
             / "services"
-            / "agent-runtime-service"
+            / "model-registry-service"
             / "config"
             / "models.local.yaml.example"
         )

@@ -30,15 +30,19 @@ def test_build_runtime_env_injects_model_registry_paths() -> None:
 
 def test_model_registry_manifests_share_bind_mount_target() -> None:
     root = Path(__file__).resolve().parents[1]
-    mr = yaml.safe_load((root / "app/bootstrap/manifests/model-registry-service.yaml").read_text(encoding="utf-8"))
-    ar = yaml.safe_load((root / "app/bootstrap/manifests/agent-runtime-service.yaml").read_text(encoding="utf-8"))
-    mr_targets = [m.get("target") for m in mr.get("mounts", [])]
-    ar_targets = [m.get("target") for m in ar.get("mounts", [])]
-    assert "/app/shared-model-registry" in mr_targets
-    assert "/app/shared-model-registry" not in ar_targets
+    manifests = {
+        path.stem: yaml.safe_load(path.read_text(encoding="utf-8"))
+        for path in sorted((root / "app/bootstrap/manifests").glob("*.yaml"))
+    }
+    owners = [
+        unit_id
+        for unit_id, manifest in manifests.items()
+        if any(mount.get("target") == "/app/shared-model-registry" for mount in manifest.get("mounts", []))
+    ]
+    assert owners == ["model-registry-service"]
 
 
-def test_bootstrap_puts_agent_runtime_before_model_config_then_gateway() -> None:
+def test_bootstrap_puts_model_registry_before_agent_runtime_then_gateway() -> None:
     from app.services.bootstrap_service import BOOTSTRAP_UNITS
 
     units = list(BOOTSTRAP_UNITS)
@@ -46,13 +50,13 @@ def test_bootstrap_puts_agent_runtime_before_model_config_then_gateway() -> None
     assert units.index("agent-runtime-service") < units.index("platform-api-gateway")
 
 
-def test_model_config_manifest_depends_on_agent_runtime() -> None:
+def test_model_registry_manifest_has_no_runtime_dependencies() -> None:
     root = Path(__file__).resolve().parents[1]
     mr = yaml.safe_load((root / "app/bootstrap/manifests/model-registry-service.yaml").read_text(encoding="utf-8"))
     assert mr.get("discovery", {}).get("depends_on", []) == []
 
 
-def test_gateway_discovery_depends_on_model_config_service() -> None:
+def test_gateway_discovery_depends_on_model_registry_service() -> None:
     root = Path(__file__).resolve().parents[1]
     gw = yaml.safe_load((root / "app/bootstrap/manifests/platform-api-gateway.yaml").read_text(encoding="utf-8"))
     assert "model-registry-service" in gw.get("discovery", {}).get("depends_on", [])
