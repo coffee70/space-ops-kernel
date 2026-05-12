@@ -12,9 +12,9 @@ health:
   type: http
   path: /health
   port: 8080
-mounts:
-  - source: space-ops-kernel/runtime/model-registry
-    target: /app/shared-model-registry
+named_volumes:
+  - name: model_registry_data
+    target: /app/model-registry
     read_only: false
 discovery:
   service_slug: model-registry-service

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -51,10 +50,8 @@ class Settings(BaseSettings):
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"
     platform_vehicle_config_root: str = "/app/platform/backend/resources/vehicle-configurations"
-    #: Host-side directory (relative to workspace_root) mounted into model-registry-service for models.local.yaml
-    platform_models_registry_host_relpath: str = "space-ops-kernel/runtime/model-registry"
-    #: Bind mount target inside platform service containers (must match manifest `mounts` targets)
-    platform_models_registry_container_dir: str = "/app/shared-model-registry"
+    platform_persistent_vehicle_config_root: str = "/app/vehicle-configurations"
+    platform_models_registry_container_dir: str = "/app/model-registry"
     platform_models_registry_filename: str = "models.local.yaml"
     platform_satnogs_api_token: str = ""
     platform_satnogs_live_enabled: str = "false"
@@ -162,32 +159,6 @@ class Settings(BaseSettings):
     def get_cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
-    def ensure_model_registry_file(self) -> None:
-        """Ensure shared host models.local.yaml exists by copying from the platform example when missing."""
-
-        target_dir = self.workspace_root / self.platform_models_registry_host_relpath
-        target_path = target_dir / self.platform_models_registry_filename
-        example_path = (
-            self.resolved_platform_source_root
-            / "backend"
-            / "services"
-            / "model-registry-service"
-            / "config"
-            / "models.local.yaml.example"
-        )
-
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        if target_path.exists():
-            return
-
-        if not example_path.is_file():
-            raise FileNotFoundError(
-                f"Model registry seed not found at {example_path}; cannot create {target_path}"
-            )
-
-        shutil.copyfile(example_path, target_path)
-
     def ensure_runtime_dirs(self) -> None:
         for path in (
             self.resolved_runtime_root,
@@ -199,11 +170,8 @@ class Settings(BaseSettings):
             self.generated_compose_root,
             self.generated_env_root,
             self.deployment_logs_root,
-            self.workspace_root / self.platform_models_registry_host_relpath,
         ):
             path.mkdir(parents=True, exist_ok=True)
-
-        self.ensure_model_registry_file()
 
 
 @lru_cache

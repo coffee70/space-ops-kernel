@@ -28,18 +28,38 @@ def test_build_runtime_env_injects_model_registry_paths() -> None:
     assert env_ar.get("MODEL_REGISTRY_BASE_URL") == f"{cp}/internal/runtime-services/model-registry-service"
 
 
-def test_model_registry_manifests_share_bind_mount_target() -> None:
+def test_build_runtime_env_injects_persistent_vehicle_config_root_for_editor() -> None:
+    from app.config import Settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    settings = Settings(database_url="postgresql://u:p@localhost:5432/db", workspace_root=Path("/tmp/workspace-root"))
+    svc = DeploymentService(settings, MagicMock(), MagicMock())
     root = Path(__file__).resolve().parents[1]
-    manifests = {
-        path.stem: yaml.safe_load(path.read_text(encoding="utf-8"))
-        for path in sorted((root / "app/bootstrap/manifests").glob("*.yaml"))
-    }
-    owners = [
-        unit_id
-        for unit_id, manifest in manifests.items()
-        if any(mount.get("target") == "/app/shared-model-registry" for mount in manifest.get("mounts", []))
+    vc = yaml.safe_load((root / "app/bootstrap/manifests/vehicle-config-service.yaml").read_text(encoding="utf-8"))
+
+    env = svc._build_runtime_env(UnitManifest.model_validate(vc), "svc-vc")
+
+    assert env["VEHICLE_CONFIG_ROOT"] == "/app/vehicle-configurations"
+
+
+def test_model_registry_manifest_uses_named_volume_not_host_bind() -> None:
+    root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load((root / "app/bootstrap/manifests/model-registry-service.yaml").read_text(encoding="utf-8"))
+
+    assert manifest.get("mounts", []) == []
+    assert manifest.get("named_volumes") == [
+        {"name": "model_registry_data", "target": "/app/model-registry", "read_only": False}
     ]
-    assert owners == ["model-registry-service"]
+
+
+def test_vehicle_config_manifest_uses_named_volume() -> None:
+    root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load((root / "app/bootstrap/manifests/vehicle-config-service.yaml").read_text(encoding="utf-8"))
+
+    assert manifest.get("named_volumes") == [
+        {"name": "vehicle_config_data", "target": "/app/vehicle-configurations", "read_only": False}
+    ]
 
 
 def test_bootstrap_puts_model_registry_before_agent_runtime_then_gateway() -> None:

@@ -196,6 +196,37 @@ class VolumeMountSpec(StrictBaseModel):
         return path.as_posix()
 
 
+class NamedVolumeMountSpec(StrictBaseModel):
+    """Docker-managed named volume mounted into a managed runtime container."""
+
+    name: str = Field(..., min_length=1, max_length=128)
+    target: str = Field(..., min_length=1, max_length=1024)
+    read_only: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_volume_name(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("named volume name cannot be empty")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", trimmed):
+            raise ValueError("named volume name must be a lowercase Compose-safe slug")
+        return trimmed
+
+    @field_validator("target")
+    @classmethod
+    def validate_target_container_path(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("named volume target cannot be empty")
+        path = PurePosixPath(trimmed)
+        if not path.is_absolute():
+            raise ValueError("named volume target must be an absolute container path")
+        if ".." in path.parts:
+            raise ValueError("named volume target must not contain '..'")
+        return path.as_posix()
+
+
 class RuntimeTransport(StrictBaseModel):
     """Transport settings for an active runtime."""
 
@@ -417,6 +448,7 @@ class UnitManifest(StrictBaseModel):
     discovery: dict[str, Any] = Field(default_factory=dict)
     application: ApplicationManifestDefinition | None = None
     mounts: list[VolumeMountSpec] = Field(default_factory=list)
+    named_volumes: list[NamedVolumeMountSpec] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "UnitManifest":

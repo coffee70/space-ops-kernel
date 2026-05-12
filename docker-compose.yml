@@ -39,10 +39,12 @@ services:
       DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
+      VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
       CONTROL_PLANE_URL: http://control-plane:8100
       NATS_URL: nats://nats:4222
       CORS_ORIGIN_REGEX: "^http://[^/]+:(3000|8080)$"
+    volumes:
+      - vehicle_config_data:/app/vehicle-configurations:ro
     healthcheck:
       test:
         [
@@ -83,6 +85,7 @@ services:
       PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100
       PLATFORM_NATS_URL: nats://nats:4222
       PLATFORM_VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
+      PLATFORM_PERSISTENT_VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
       PLATFORM_SATNOGS_API_TOKEN: ${SATNOGS_API_TOKEN:-}
       PLATFORM_SATNOGS_LIVE_ENABLED: ${SATNOGS_LIVE_ENABLED:-false}
       PLATFORM_SATNOGS_ADAPTER_CONFIG: app/adapters/satnogs/config.example.yaml
@@ -156,3 +159,4 @@ services:
 
 volumes:
   postgres_data:
+  vehicle_config_data:

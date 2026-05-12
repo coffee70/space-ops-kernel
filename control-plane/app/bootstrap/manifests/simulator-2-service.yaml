@@ -12,6 +12,10 @@ health:
   type: http
   path: /health
   port: 8080
+named_volumes:
+  - name: vehicle_config_data
+    target: /app/vehicle-configurations
+    read_only: true
 discovery:
   service_slug: simulator-2-service
   category: telemetry-provider

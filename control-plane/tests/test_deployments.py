@@ -490,23 +490,19 @@ def test_compose_mount_read_write_uses_rw_suffix(control_plane_env: Path) -> Non
     assert "rw-mount-fixture" in spec["volumes"][0]
 
 
-def test_compose_mount_uses_docker_host_workspace_root(control_plane_env: Path) -> None:
+def test_compose_named_volume_generates_service_mount_and_top_level_declaration(control_plane_env: Path) -> None:
     from app.config import Settings
     from app.deployments.service import DeploymentService
-    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest, VolumeMountSpec
+    from app.schemas import BuildSpec, HealthSpec, NamedVolumeMountSpec, RunSpec, UnitManifest
 
     workspace_root = control_plane_env
-    host_workspace_root = Path("/Users/example/space-ops")
     settings = Settings(
         database_url="postgresql://u:p@localhost:5432/db",
         workspace_root=workspace_root,
         runtime_root=workspace_root / "space-ops-kernel" / "runtime",
-        docker_host_workspace_root=host_workspace_root,
     )
     source_root = workspace_root / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
     (source_root / "project" / "space-ops-platform").mkdir(parents=True, exist_ok=True)
-    data_dir = workspace_root / "space-ops-kernel" / "runtime" / "model-registry"
-    data_dir.mkdir(parents=True, exist_ok=True)
 
     service = DeploymentService(settings, object(), object())
     payload = service._build_compose_payload(
@@ -521,10 +517,10 @@ def test_compose_mount_uses_docker_host_workspace_root(control_plane_env: Path) 
             run=RunSpec(command="node dist/server.js"),
             health=HealthSpec(type="http", path="/health", port=8080),
             discovery={"service_slug": "model-registry-service"},
-            mounts=[
-                VolumeMountSpec(
-                    source="space-ops-kernel/runtime/model-registry",
-                    target="/app/shared-model-registry",
+            named_volumes=[
+                NamedVolumeMountSpec(
+                    name="model_registry_data",
+                    target="/app/model-registry",
                     read_only=False,
                 )
             ],
@@ -534,9 +530,114 @@ def test_compose_mount_uses_docker_host_workspace_root(control_plane_env: Path) 
         env_path=workspace_root / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
     )
     spec = next(iter(payload["services"].values()))
-    assert spec["volumes"] == [
-        "/Users/example/space-ops/space-ops-kernel/runtime/model-registry:/app/shared-model-registry:rw"
-    ]
+    assert spec["volumes"] == ["model_registry_data:/app/model-registry:rw"]
+    assert payload["volumes"] == {"model_registry_data": {}}
+
+
+def test_compose_bind_mounts_and_named_volumes_can_coexist(control_plane_env: Path) -> None:
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, NamedVolumeMountSpec, RunSpec, UnitManifest, VolumeMountSpec
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-platform").mkdir(parents=True, exist_ok=True)
+    data_dir = settings.workspace_root / "space-ops-apps" / "coexist-mount-fixture"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    service = DeploymentService(settings, object(), object())
+    payload = service._build_compose_payload(
+        manifest=UnitManifest(
+            unit_id="fixture-service",
+            display_name="Fixture",
+            package_owner="space-ops-platform",
+            runtime_kind="service",
+            runtime_template="python-service",
+            source_path="project/space-ops-platform",
+            build=BuildSpec(command="pip install -r requirements.txt"),
+            run=RunSpec(command="uvicorn app:app --host 0.0.0.0 --port 8080"),
+            health=HealthSpec(type="http", path="/health", port=8080),
+            discovery={"service_slug": "fixture-service"},
+            mounts=[
+                VolumeMountSpec(
+                    source="space-ops-apps/coexist-mount-fixture",
+                    target="/app/bind",
+                    read_only=True,
+                )
+            ],
+            named_volumes=[
+                NamedVolumeMountSpec(
+                    name="fixture_data",
+                    target="/app/data",
+                    read_only=False,
+                )
+            ],
+        ),
+        source_root=source_root,
+        service_name="fixture-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    spec = next(iter(payload["services"].values()))
+    assert len(spec["volumes"]) == 2
+    assert spec["volumes"][0].endswith(":/app/bind:ro")
+    assert spec["volumes"][1] == "fixture_data:/app/data:rw"
+    assert payload["volumes"] == {"fixture_data": {}}
+
+
+def test_model_registry_manifest_compose_uses_named_volume(control_plane_env: Path) -> None:
+    import yaml
+
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-platform" / "backend" / "services" / "model-registry-service").mkdir(
+        parents=True, exist_ok=True
+    )
+    manifest_root = Path(__file__).resolve().parents[1]
+    manifest = UnitManifest.model_validate(
+        yaml.safe_load((manifest_root / "app/bootstrap/manifests/model-registry-service.yaml").read_text(encoding="utf-8"))
+    )
+
+    payload = DeploymentService(settings, object(), object())._build_compose_payload(
+        manifest=manifest,
+        source_root=source_root,
+        service_name="model-registry-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+
+    spec = next(iter(payload["services"].values()))
+    assert spec["volumes"] == ["model_registry_data:/app/model-registry:rw"]
+    assert payload["volumes"] == {"model_registry_data": {}}
+
+
+def test_vehicle_config_manifest_compose_uses_named_volume(control_plane_env: Path) -> None:
+    import yaml
+
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    settings = get_settings()
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-platform").mkdir(parents=True, exist_ok=True)
+    manifest_root = Path(__file__).resolve().parents[1]
+    manifest = UnitManifest.model_validate(
+        yaml.safe_load((manifest_root / "app/bootstrap/manifests/vehicle-config-service.yaml").read_text(encoding="utf-8"))
+    )
+
+    payload = DeploymentService(settings, object(), object())._build_compose_payload(
+        manifest=manifest,
+        source_root=source_root,
+        service_name="vehicle-config-service-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+
+    spec = next(iter(payload["services"].values()))
+    assert spec["volumes"] == ["vehicle_config_data:/app/vehicle-configurations:rw"]
+    assert payload["volumes"] == {"vehicle_config_data": {}}
 
 
 def test_volume_mount_spec_rejects_traversal_source() -> None:
@@ -546,6 +647,34 @@ def test_volume_mount_spec_rejects_traversal_source() -> None:
 
     with pytest.raises(ValidationError):
         VolumeMountSpec(source="space-ops-apps/../etc", target="/app/x", read_only=True)
+
+
+def test_named_volume_mount_spec_validates_compose_safe_fields() -> None:
+    from app.schemas import NamedVolumeMountSpec
+
+    spec = NamedVolumeMountSpec(name="model_registry_data", target="/app/model-registry", read_only=False)
+
+    assert spec.name == "model_registry_data"
+    assert spec.target == "/app/model-registry"
+    assert spec.read_only is False
+
+
+@pytest.mark.parametrize(
+    ("name", "target"),
+    [
+        ("ModelRegistry", "/app/model-registry"),
+        ("model.registry", "/app/model-registry"),
+        ("model_registry_data", "app/model-registry"),
+        ("model_registry_data", "/app/../model-registry"),
+    ],
+)
+def test_named_volume_mount_spec_rejects_invalid_fields(name: str, target: str) -> None:
+    from pydantic import ValidationError
+
+    from app.schemas import NamedVolumeMountSpec
+
+    with pytest.raises(ValidationError):
+        NamedVolumeMountSpec(name=name, target=target, read_only=False)
 
 
 def test_satnogs_env_only_injected_for_satnogs_adapter_service(control_plane_env: Path) -> None:
