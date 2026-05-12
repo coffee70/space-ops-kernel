@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.config import Settings
+from app.services.bootstrap_service import BOOTSTRAP_UNITS
 from app.services.system_status import ContainerStatus, SystemStatusService
 
 
@@ -116,9 +117,9 @@ def test_runtime_summary_uses_bootstrap_units_and_marks_missing(tmp_path: Path) 
 
     summary = service._build_runtime_summary({}, False, {"units": []})
 
-    assert summary.expected_count == 21
+    assert summary.expected_count == len(BOOTSTRAP_UNITS)
     assert summary.existing_count == 0
-    assert summary.missing_count == 21
+    assert summary.missing_count == len(BOOTSTRAP_UNITS)
     assert summary.services[0].id == "vehicle-config-service"
     assert summary.services[0].ui_state == "missing"
 

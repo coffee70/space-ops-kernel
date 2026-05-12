@@ -32,6 +32,9 @@
 	handle /registry/* {
 		reverse_proxy control-plane:8100
 	}
+	handle /system/* {
+		reverse_proxy control-plane:8100
+	}
 	handle /runtime-applications/* {
 		reverse_proxy control-plane:8100
 	}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.services.bootstrap_service import BOOTSTRAP_UNITS
 from app.services.system_status import ContainerStatus, SystemStatusService
 
 
@@ -21,5 +22,5 @@ def test_system_deployments_overview_route_returns_aggregate(client, monkeypatch
     assert payload["core"]["expected_count"] == 1
     assert payload["core"]["existing_count"] == 1
     assert payload["core"]["services"][0]["ui_state"] == "healthy"
-    assert payload["runtime"]["expected_count"] == 21
+    assert payload["runtime"]["expected_count"] == len(BOOTSTRAP_UNITS)
     assert payload["bootstrap"]["status"] == "not_started"
