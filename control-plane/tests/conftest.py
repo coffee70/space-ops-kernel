@@ -80,6 +80,28 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     _write(platform_root / "README.md", "platform")
+    # Minimal example so Settings.ensure_runtime_dirs() can seed models.local.yaml into the runtime mount dir.
+    _write(
+        platform_root / "backend/services/model-registry-service/config/models.local.yaml.example",
+        """version: 1
+defaults:
+  chatModel: m1
+  codingModel: m1
+  fastModel: m1
+  restrictedModel: m1
+providers:
+  p1:
+    type: openai
+    displayName: OpenAI
+    apiKeyEnv: OPENAI_API_KEY
+models:
+  - id: m1
+    providerRef: p1
+    providerModelId: gpt-4o-mini
+    enabled: true
+    defaultFor: [chat, coding, fast]
+""",
+    )
     _write(apps_root / "README.md", "apps")
     _write(
         platform_root / "backend/services/derived-telemetry-service/requirements.txt",
@@ -121,12 +143,12 @@ def control_plane_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         ),
     )
     _write(
-        apps_root / "mission-control-ui/src/applications/sources/application.seed.json",
+        apps_root / "mission-control-ui/src/applications/control-panel/application.seed.json",
         (
-            '{"applicationId":"sources","title":"Sources","description":"Source registry and configuration tools.",'
-            '"iconKey":"server","iconColor":"#fb7185","iconBackground":"rgba(251, 113, 133, 0.16)",'
-            '"applicationType":"native","routePath":"/apps/sources","loaderKey":"sources","version":"0.1.0",'
-            '"enabled":true,"sortOrder":40,"owner":"space-ops-apps","capabilities":["source-management"]}'
+            '{"applicationId":"control-panel","title":"Control Panel","description":"Source registry, vehicle configuration, and AI Engineer control settings.",'
+            '"iconKey":"settings","iconColor":"#fb7185","iconBackground":"rgba(251, 113, 133, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/control-panel","loaderKey":"control-panel","version":"0.1.0",'
+            '"enabled":true,"sortOrder":40,"owner":"space-ops-apps","capabilities":["source-management","vehicle-configuration","ai-engineer-configuration"]}'
         ),
     )
     _write(

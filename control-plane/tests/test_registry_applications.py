@@ -91,7 +91,7 @@ def test_get_registry_applications_returns_seeded_catalog_in_order(client) -> No
         "overview",
         "telemetry",
         "planning",
-        "sources",
+        "control-panel",
         "ai-engineer",
     ]
 

@@ -39,10 +39,12 @@ services:
       DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
+      VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
       CONTROL_PLANE_URL: http://control-plane:8100
       NATS_URL: nats://nats:4222
       CORS_ORIGIN_REGEX: "^http://[^/]+:(3000|8080)$"
+    volumes:
+      - vehicle_config_data:/app/vehicle-configurations:ro
     healthcheck:
       test:
         [
@@ -67,6 +69,8 @@ services:
       - "8100:8100"
     environment:
       DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/control_plane_db
+      # Bind-mount parent of repos so workspace_root resolves to /workspace/space-ops-kernel/... (aligned with split-checkout layout).
+      WORKSPACE_ROOT: /workspace
       RUNTIME_ROOT: /app/kernel/runtime
       PLATFORM_SOURCE_ROOT: /imports/space-ops-platform
       APPS_SOURCE_ROOT: /imports/space-ops-apps
@@ -81,11 +85,13 @@ services:
       PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100
       PLATFORM_NATS_URL: nats://nats:4222
       PLATFORM_VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
+      PLATFORM_PERSISTENT_VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
       PLATFORM_SATNOGS_API_TOKEN: ${SATNOGS_API_TOKEN:-}
       PLATFORM_SATNOGS_LIVE_ENABLED: ${SATNOGS_LIVE_ENABLED:-false}
       PLATFORM_SATNOGS_ADAPTER_CONFIG: app/adapters/satnogs/config.example.yaml
       PLATFORM_SATNOGS_DLQ_ROOT: /app/runtime/satnogs-adapter/dlq
     volumes:
+      - ../:/workspace:rw
       - ./:/app/kernel
       - ../space-ops-platform:/imports/space-ops-platform:ro
       - ../space-ops-apps:/imports/space-ops-apps:ro
@@ -126,6 +132,15 @@ services:
         condition: service_healthy
       control-plane:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   platform-edge-proxy:
     build:
@@ -153,3 +168,4 @@ services:
 
 volumes:
   postgres_data:
+  vehicle_config_data:

@@ -46,7 +46,9 @@ docker compose up -d
 
 2. **Direct frontend dev:** open **`http://localhost:3000`** and set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in `.env` so the browser can reach `platform-api` without the edge proxy.
 
-Agent-runtime loads `models.local.yaml` when present (gitignored, instantiation-specific), otherwise falls back to the committed template `space-ops-platform/backend/services/agent-runtime-service/config/models.local.yaml.example` — copy it to `models.local.yaml` to customize.
+**model-registry-service** persists editable `models.local.yaml` in a Docker named volume during Compose deployments. The service seeds the file from its bundled example on first startup and never overwrites existing edits. **agent-runtime-service** consumes the model catalog over HTTP.
+
+**vehicle-config-service** persists editable vehicle configuration files in a Docker named volume during Compose deployments. The service seeds the volume from bundled baseline vehicle configs on first startup and never overwrites an initialized volume. The same storage shape is intended to map to Kubernetes PVCs later.
 
 **Debug / direct service ports**
 
@@ -153,7 +155,9 @@ Compose builds service images from sibling repositories:
 - `../space-ops-apps/mission-control-ui` for `mission-control-ui`
 SatNOGS and the telemetry simulators are deployed as managed Layer 2 services from `../space-ops-platform`.
 
-Managed platform services read vehicle configuration resources from `/app/platform/backend/resources/vehicle-configurations`.
+The **`control-plane`** service mounts the split-checkout parent directory (`../`) at **`/workspace`** and sets **`WORKSPACE_ROOT=/workspace`**, matching the on-disk layout `workspace/space-ops-kernel`, `workspace/space-ops-platform`, etc. Managed runtime manifests can use workspace-relative bind mounts for source-owned read-only assets and Docker named volumes for service-owned persistent config.
+
+Managed platform services that need edited vehicle configs read them from `/app/vehicle-configurations`, backed by the `vehicle_config_data` named volume. Bundled baseline resources remain available in the platform image under `/app/platform/backend/resources/vehicle-configurations`.
 
 Common environment values:
 

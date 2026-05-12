@@ -27,6 +27,26 @@ from app.schemas import (
 from app.services.proxy_targets import build_runtime_health_url
 from app.services.shell import run_command
 
+PERSISTENT_VEHICLE_CONFIG_READERS = {
+    "vehicle-config-service",
+    "simulator-service",
+    "simulator-2-service",
+    "satnogs-adapter-service",
+}
+
+
+def _compose_safe_run_command(run_command: str) -> Any:
+    """Return command as a Compose exec list for common `sh -c "..."` manifests.
+
+    YAML safe_dump folds long quoted strings awkwardly (newlines inside sh -c), which breaks deployments.
+    """
+    trimmed = run_command.strip()
+    prefix = 'sh -c "'
+    if trimmed.startswith(prefix) and trimmed.endswith('"') and len(trimmed) >= len(prefix) + 2:
+        inner_script = trimmed[len(prefix) : -1]
+        return ["sh", "-c", inner_script]
+    return run_command
+
 
 class DeploymentService:
     """Turn managed fork commits into running capabilities."""
@@ -254,6 +274,14 @@ class DeploymentService:
                     "NATS_URL": self.settings.platform_nats_url,
                 }
             )
+            if manifest.unit_id in PERSISTENT_VEHICLE_CONFIG_READERS:
+                env["VEHICLE_CONFIG_ROOT"] = self.settings.platform_persistent_vehicle_config_root
+            shared_models_path = self.settings.platform_models_local_yaml_container_path
+            if manifest.unit_id == "model-registry-service":
+                env["MODEL_CONFIG_PATH"] = shared_models_path
+            if manifest.unit_id == "agent-runtime-service":
+                cp_base = self.settings.platform_control_plane_url.rstrip("/")
+                env["MODEL_REGISTRY_BASE_URL"] = f"{cp_base}/internal/runtime-services/model-registry-service"
             if manifest.unit_id == "satnogs-adapter-service":
                 env.update(
                     {
@@ -297,20 +325,36 @@ class DeploymentService:
                 "context": str(self._build_context_path(manifest, source_root)),
                 "dockerfile": self._build_dockerfile_path(manifest),
             },
-            "command": manifest.run.command,
+            "command": _compose_safe_run_command(manifest.run.command),
             "environment": self._build_runtime_env(manifest, service_name),
         }
-        volume_entries = self._compose_volume_entries(manifest)
-        if volume_entries:
-            service_spec["volumes"] = volume_entries
+        bind_volume_entries = self._compose_volume_entries(manifest)
+        named_volume_entries, named_volume_declarations = self._compose_named_volume_entries(manifest)
+        service_volumes = [*bind_volume_entries, *named_volume_entries]
+        if service_volumes:
+            service_spec["volumes"] = service_volumes
 
         payload = {"services": {service_name: service_spec}}
+        if named_volume_declarations:
+            payload["volumes"] = named_volume_declarations
         return payload
+
+    def _compose_named_volume_entries(self, manifest: UnitManifest) -> tuple[list[str], dict[str, dict[str, Any]]]:
+        """Mount Docker-managed named volumes and declare top-level Compose volume keys."""
+
+        entries: list[str] = []
+        declarations: dict[str, dict[str, Any]] = {}
+        for volume in manifest.named_volumes:
+            mode = "ro" if volume.read_only else "rw"
+            entries.append(f"{volume.name}:{volume.target}:{mode}")
+            declarations[volume.name] = {}
+        return entries, declarations
 
     def _compose_volume_entries(self, manifest: UnitManifest) -> list[str]:
         """Bind-mount declared host paths into the service (paths relative to generated compose dir)."""
 
         workspace_root = self.settings.workspace_root.resolve()
+        docker_host_workspace_root = self._docker_host_workspace_root(workspace_root)
         compose_dir = self.settings.generated_compose_root
         compose_dir.mkdir(parents=True, exist_ok=True)
         compose_resolved = compose_dir.resolve()
@@ -324,10 +368,23 @@ class DeploymentService:
                 raise ValueError(f"mount source resolves outside workspace_root: {mount.source}") from exc
             if not host_path.is_dir():
                 continue
-            rel_host = Path(os.path.relpath(str(host_path), str(compose_resolved))).as_posix()
+            if docker_host_workspace_root is None:
+                compose_host = Path(os.path.relpath(str(host_path), str(compose_resolved))).as_posix()
+            else:
+                mount_relpath = host_path.relative_to(workspace_root)
+                compose_host = str((docker_host_workspace_root / mount_relpath).resolve())
             mode = "ro" if mount.read_only else "rw"
-            entries.append(f"{rel_host}:{mount.target}:{mode}")
+            entries.append(f"{compose_host}:{mount.target}:{mode}")
         return entries
+
+    def _docker_host_workspace_root(self, workspace_root: Path) -> Path | None:
+        """Return an explicitly configured Docker-daemon-visible workspace path."""
+
+        _ = workspace_root
+        configured = self.settings.docker_host_workspace_root
+        if configured is not None:
+            return configured.resolve()
+        return None
 
     def _build_context_path(self, manifest: UnitManifest, source_root: Path) -> Path:
         if manifest.package_owner == "space-ops-platform" and manifest.source_path == "project/space-ops-platform":

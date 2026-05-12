@@ -1,0 +1,29 @@
+unit_id: model-registry-service
+display_name: Model Registry Service
+package_owner: space-ops-platform
+runtime_kind: service
+runtime_template: node-service
+source_path: project/space-ops-platform/backend/services/model-registry-service
+build:
+  command: sh -c "npm install && npm run build"
+run:
+  command: node dist/server.js
+health:
+  type: http
+  path: /health
+  port: 8080
+named_volumes:
+  - name: model_registry_data
+    target: /app/model-registry
+    read_only: false
+discovery:
+  service_slug: model-registry-service
+  category: intelligence
+  api_base_path: /model-registry
+  capability_tags:
+    - model-registry
+    - model-configuration
+    - model-catalog
+  health_endpoint: /health
+  visibility: internal
+  depends_on: []

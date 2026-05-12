@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import bootstrap, change_previews, code, delete, deployments, health, registry, templates
+from app.api import bootstrap, change_previews, code, delete, deployments, health, registry, system, templates
 from app.config import get_settings
 from app.db import ensure_database_exists
 from app.migrations import run_migrations
@@ -89,6 +89,7 @@ app.include_router(delete.router)
 app.include_router(templates.router)
 app.include_router(deployments.router)
 app.include_router(change_previews.router)
+app.include_router(system.router)
 app.include_router(registry.router)
 app.include_router(registry.proxy_router)
 app.include_router(registry.internal_proxy_router)

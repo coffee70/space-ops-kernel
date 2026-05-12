@@ -22,7 +22,15 @@ else
   "${VENVDIR}/bin/pip" install -q -r "${CONTROL_PLANE_ROOT}/requirements.txt"
 fi
 
-PYTEST_ARGS=(tests)
+# Default to the entire suite. If the first arg is tests/...(.py|.py::...), use args as selectors (focused run).
+PYTEST_SELECTOR=(tests)
+if [[ "$#" -gt 0 ]] && [[ "${1}" == tests/* ]]; then
+  PYTEST_SELECTOR=("$@")
+elif [[ "$#" -gt 0 ]]; then
+  PYTEST_SELECTOR=(tests "$@")
+fi
+
+PYTEST_ARGS=("${PYTEST_SELECTOR[@]}")
 case "${CONTROL_PLANE_TEST_WORKERS}" in
   ""|"serial"|"1")
     ;;
@@ -41,4 +49,4 @@ esac
 
 echo "==> pytest control-plane/tests"
 cd "${CONTROL_PLANE_ROOT}"
-exec "${VENVDIR}/bin/pytest" "${PYTEST_ARGS[@]}" "$@"
+exec "${VENVDIR}/bin/pytest" "${PYTEST_ARGS[@]}"
