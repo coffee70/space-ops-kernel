@@ -99,8 +99,29 @@ class SystemStatusService:
             except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 continue
             docker_available = True
-            containers.update(self._parse_container_output(result.stdout))
+            containers = self._merge_container_statuses(containers, self._parse_container_output(result.stdout))
         return containers, docker_available
+
+    def _merge_container_statuses(
+        self,
+        existing: dict[str, ContainerStatus],
+        incoming: dict[str, ContainerStatus],
+    ) -> dict[str, ContainerStatus]:
+        merged = dict(existing)
+        for service, incoming_status in incoming.items():
+            current = merged.get(service)
+            if current is None:
+                merged[service] = incoming_status
+                continue
+            merged[service] = ContainerStatus(
+                service=service,
+                name=current.name or incoming_status.name,
+                state=current.state or incoming_status.state,
+                status=current.status or incoming_status.status,
+                health=current.health or incoming_status.health,
+                exit_code=current.exit_code if current.exit_code is not None else incoming_status.exit_code,
+            )
+        return merged
 
     def _build_core_summary(self, containers: dict[str, ContainerStatus]) -> ServiceGroupSummary:
         services = []

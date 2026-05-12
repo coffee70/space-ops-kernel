@@ -198,7 +198,32 @@ def test_overall_state_prioritizes_broken_then_degraded_then_healthy(tmp_path: P
     assert service._overall_state(healthy_core, runtime_healthy, {"status": "completed"}) == "healthy"
 
 
-def test_container_inspector_merges_compose_and_project_label_output(tmp_path: Path, monkeypatch) -> None:
+def test_container_inspector_preserves_compose_health_when_fallback_lacks_health(tmp_path: Path, monkeypatch) -> None:
+    settings = _settings(tmp_path)
+    settings.resolved_compose_file.write_text("services:\n  postgres:\n    image: postgres\n", encoding="utf-8")
+    service = _service(settings)
+
+    def fake_run(command, **_kwargs):
+        if command[:2] == ["docker", "compose"]:
+            return SimpleNamespace(stdout='{"Service":"postgres","Name":"compose-postgres","State":"running","Status":"Up 1 minute (healthy)","Health":"healthy"}\n')
+        return SimpleNamespace(
+            stdout=(
+                '{"Names":"fallback-postgres","State":"running","Status":"Up 1 minute",'
+                '"Labels":"com.docker.compose.project=space-ops-kernel,com.docker.compose.service=postgres"}\n'
+            )
+        )
+
+    monkeypatch.setattr("app.services.system_status.subprocess.run", fake_run)
+
+    containers, docker_available = service.inspect_compose_containers()
+
+    assert docker_available is True
+    assert containers["postgres"].health == "healthy"
+    assert containers["postgres"].name == "compose-postgres"
+    assert containers["postgres"].status == "Up 1 minute (healthy)"
+
+
+def test_container_inspector_fallback_adds_services_missing_from_compose_output(tmp_path: Path, monkeypatch) -> None:
     settings = _settings(tmp_path)
     settings.resolved_compose_file.write_text("services:\n  postgres:\n    image: postgres\n", encoding="utf-8")
     service = _service(settings)
@@ -220,3 +245,29 @@ def test_container_inspector_merges_compose_and_project_label_output(tmp_path: P
     assert docker_available is True
     assert containers["postgres"].health == "healthy"
     assert containers["vehicle-config-service-dep-1"].state == "running"
+
+
+def test_core_services_surface_health_status_after_container_merge(tmp_path: Path, monkeypatch) -> None:
+    settings = _settings(tmp_path)
+    settings.resolved_compose_file.write_text("services:\n  postgres:\n    image: postgres\n", encoding="utf-8")
+    service = _service(settings)
+
+    def fake_run(command, **_kwargs):
+        if command[:2] == ["docker", "compose"]:
+            return SimpleNamespace(stdout='{"Service":"postgres","State":"running","Status":"Up 1 minute (healthy)","Health":"healthy"}\n')
+        return SimpleNamespace(
+            stdout=(
+                '{"Names":"fallback-postgres","State":"running","Status":"Up 1 minute",'
+                '"Labels":"com.docker.compose.project=space-ops-kernel,com.docker.compose.service=postgres"}\n'
+            )
+        )
+
+    monkeypatch.setattr("app.services.system_status.subprocess.run", fake_run)
+
+    containers, docker_available = service.inspect_compose_containers()
+    row = service._build_core_summary(containers).services[0]
+
+    assert docker_available is True
+    assert row.id == "postgres"
+    assert row.ui_state == "healthy"
+    assert row.health_status == "healthy"
