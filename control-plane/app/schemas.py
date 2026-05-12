@@ -621,3 +621,77 @@ class ChangePreviewRevertResponse(DeploymentRecordResponse):
     conversation_id: str | None = None
     agent_run_id: str | None = None
     preview_deployment_id: str | None = None
+
+
+DeploymentUiState = Literal[
+    "healthy",
+    "deploying",
+    "stale",
+    "missing",
+    "failed",
+    "crashed",
+    "unknown",
+    "skipped",
+]
+
+
+class ServiceStatusItem(BaseModel):
+    """Read-only deployment health projection for one expected service."""
+
+    id: str
+    display_name: str
+    group: Literal["core", "runtime"]
+    expected: bool
+    exists: bool
+    ui_state: DeploymentUiState
+    health_status: str | None = None
+    deployment_status: str | None = None
+    bootstrap_status: str | None = None
+    container_state: str | None = None
+    container_status: str | None = None
+    active_deployment_id: str | None = None
+    latest_deployment_id: str | None = None
+    service_slug: str | None = None
+    runtime_kind: str | None = None
+    runtime_template: str | None = None
+    branch: str | None = None
+    commit_sha: str | None = None
+    updated_at: str | None = None
+    last_checked_at: str | None = None
+    failure_reason: str | None = None
+    latest_error: str | None = None
+    logs_url: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ServiceGroupSummary(BaseModel):
+    """Counts and rows for one deployment service group."""
+
+    expected_count: int
+    existing_count: int
+    healthy_count: int
+    warning_count: int
+    broken_count: int
+    missing_count: int
+    services: list[ServiceStatusItem]
+
+
+class BootstrapSummary(BaseModel):
+    """Latest runtime bootstrap run summary."""
+
+    run_id: int | None = None
+    status: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    failure_reason: str | None = None
+    summary: dict[str, int] = Field(default_factory=dict)
+
+
+class SystemDeploymentOverviewResponse(BaseModel):
+    """Read-only aggregate deployment overview."""
+
+    generated_at: str
+    overall_state: Literal["healthy", "degraded", "broken", "unknown"]
+    core: ServiceGroupSummary
+    runtime: ServiceGroupSummary
+    bootstrap: BootstrapSummary | None = None
