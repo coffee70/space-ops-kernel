@@ -51,6 +51,7 @@ BOOTSTRAP_UNITS = (
     "telemetry-intelligence-service",
     "ops-events-service",
     "document-knowledge-service",
+    "document-ingestion-worker",
     "tool-registry-service",
     "tool-execution-service",
     "code-intelligence-service",
