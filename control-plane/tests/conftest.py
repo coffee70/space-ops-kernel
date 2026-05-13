@@ -158,8 +158,19 @@ models:
             '"description":"AI-native engineering interface for platform capabilities.",'
             '"iconKey":"sparkles","iconColor":"#34d399","iconBackground":"rgba(52, 211, 153, 0.16)",'
             '"applicationType":"native","routePath":"/apps/ai-engineer","loaderKey":"ai-engineer",'
-            '"version":"0.1.0","enabled":true,"sortOrder":50,"owner":"space-ops-apps",'
+            '"version":"0.1.0","enabled":true,"sortOrder":25,"owner":"space-ops-apps",'
             '"capabilities":["ai-engineering","platform-intelligence"]}'
+        ),
+    )
+    _write(
+        apps_root / "mission-control-ui/src/applications/knowledge/application.seed.json",
+        (
+            '{"applicationId":"knowledge","title":"Knowledge",'
+            '"description":"Durable mission and vehicle document knowledge for AI retrieval.",'
+            '"iconKey":"brain","iconColor":"#a78bfa","iconBackground":"rgba(167, 139, 250, 0.16)",'
+            '"applicationType":"native","routePath":"/apps/knowledge","loaderKey":"knowledge",'
+            '"version":"0.1.0","enabled":true,"sortOrder":24,"owner":"space-ops-apps",'
+            '"capabilities":["knowledge-management","document-ingestion","ai-retrieval"]}'
         ),
     )
 
