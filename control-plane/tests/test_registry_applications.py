@@ -90,9 +90,10 @@ def test_get_registry_applications_returns_seeded_catalog_in_order(client) -> No
     assert [item["applicationId"] for item in payload] == [
         "overview",
         "telemetry",
+        "knowledge",
+        "ai-engineer",
         "planning",
         "control-panel",
-        "ai-engineer",
     ]
 
 
