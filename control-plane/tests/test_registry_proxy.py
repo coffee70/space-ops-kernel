@@ -128,18 +128,27 @@ class RecordingAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def request(self, method: str, url: str, headers: dict | None = None, content: bytes | None = None):
+    def build_request(self, method: str, url: str, headers: dict | None = None, content: bytes | None = None):
+        request = httpx.Request(method, url, headers=headers, content=content if content is not None else b"")
+        request.extensions["recorded_content"] = content
+        return request
+
+    async def send(self, request: httpx.Request, *, stream: bool = False):
         self.calls.append(
             {
-                "method": method,
-                "url": url,
-                "headers": headers or {},
-                "content": content,
+                "method": request.method,
+                "url": str(request.url),
+                "headers": dict(request.headers),
+                "content": request.extensions.get("recorded_content"),
                 "follow_redirects": self.follow_redirects,
                 "timeout": _serialized_async_timeout(self.timeout),
+                "stream": stream,
             }
         )
         return self.response
+
+    async def aclose(self):
+        return None
 
 
 def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -> None:
@@ -167,6 +176,7 @@ def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatc
             "content": None,
             "follow_redirects": False,
             "timeout": EXPECTED_RUNTIME_PROXY_TIMEOUT,
+            "stream": True,
         }
     ]
 
@@ -331,6 +341,7 @@ def test_internal_service_proxy_uses_active_deployment_runtime_ref(client, monke
             "content": None,
             "follow_redirects": False,
             "timeout": EXPECTED_RUNTIME_PROXY_TIMEOUT,
+            "stream": True,
         }
     ]
 
@@ -511,12 +522,18 @@ class _ConnectFailAsyncClient:
     async def __aexit__(self, *_args):
         return False
 
-    async def request(self, *_a, **_k):
+    def build_request(self, method: str, url: str, **_k):
+        return httpx.Request(method, url)
+
+    async def send(self, *_a, **_k):
         raise httpx.ConnectError("connection refused", request=MagicMock())
+
+    async def aclose(self):
+        return None
 
 
 class _ReadTimeoutAsyncClient(_ConnectFailAsyncClient):
-    async def request(self, *_a, **_k):
+    async def send(self, *_a, **_k):
         raise httpx.ReadTimeout("timed out")
 
 

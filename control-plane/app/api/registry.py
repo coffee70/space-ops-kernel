@@ -9,7 +9,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -387,14 +387,15 @@ async def _proxy_request(
     label = proxy_target_label or runtime_ref.service_name
     upstream_log = _upstream_for_log(upstream)
     started = time.perf_counter()
+    client = httpx.AsyncClient(follow_redirects=False, timeout=timeout)
     try:
-        async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
-            upstream_response = await client.request(
-                request.method,
-                upstream,
-                headers=headers,
-                content=body if body else None,
-            )
+        upstream_request = client.build_request(
+            request.method,
+            upstream,
+            headers=headers,
+            content=body if body else None,
+        )
+        upstream_response = await client.send(upstream_request, stream=True)
     except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.ConnectTimeout) as exc:
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.error(
@@ -406,10 +407,8 @@ async def _proxy_request(
             type(exc).__name__,
             str(exc) or "(empty)",
         )
-        raise HTTPException(
-            status_code=504,
-            detail="runtime proxy upstream timeout",
-        ) from exc
+        await client.aclose()
+        raise HTTPException(status_code=504, detail="runtime proxy upstream timeout") from exc
     except httpx.ConnectError as exc:
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.error(
@@ -421,10 +420,8 @@ async def _proxy_request(
             type(exc).__name__,
             str(exc) or "(empty)",
         )
-        raise HTTPException(
-            status_code=502,
-            detail="runtime proxy upstream connect failed",
-        ) from exc
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="runtime proxy upstream connect failed") from exc
     except httpx.RequestError as exc:
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.error(
@@ -436,13 +433,19 @@ async def _proxy_request(
             type(exc).__name__,
             str(exc) or "(empty)",
         )
-        raise HTTPException(
-            status_code=502,
-            detail="runtime proxy upstream transport error",
-        ) from exc
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="runtime proxy upstream transport error") from exc
 
-    return Response(
-        content=upstream_response.content,
+    async def stream_upstream():
+        try:
+            async for chunk in upstream_response.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream_response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        stream_upstream(),
         status_code=upstream_response.status_code,
         headers={
             key: value
