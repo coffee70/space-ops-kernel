@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     platform_openai_api_key: str = ""
     platform_anthropic_api_key: str = ""
     platform_openai_base_url: str = ""
+    platform_agent_runtime_log_stream_parts: str = "false"
     platform_api_base_url: str = "http://platform-api:8000"
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"

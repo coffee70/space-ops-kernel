@@ -10,6 +10,8 @@ PLAYWRIGHT_IMAGE="${PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.58.2-noble
 PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://platform-edge-proxy:8080}"
 PLAYWRIGHT_API_URL="${PLAYWRIGHT_API_URL:-http://platform-edge-proxy:8080}"
 PLAYWRIGHT_DOCKER_NETWORK="${PLAYWRIGHT_DOCKER_NETWORK:-space-ops-kernel_default}"
+PLAYWRIGHT_ALLOW_COSTLY_LLM_TESTS="${PLAYWRIGHT_ALLOW_COSTLY_LLM_TESTS:-0}"
+PLAYWRIGHT_COSTS_MONEY_ABORT_BEFORE_SEND="${PLAYWRIGHT_COSTS_MONEY_ABORT_BEFORE_SEND:-0}"
 TARGET="${1:-test}"
 
 require_command() {
@@ -45,6 +47,10 @@ case "${TARGET}" in
   phase3-no-llm)
     runner_cmd=(npx playwright test tests/ai-engineer-phase3-no-llm.spec.ts)
     ;;
+  costs-money)
+    PLAYWRIGHT_ALLOW_COSTLY_LLM_TESTS=1
+    runner_cmd=(npx playwright test costs-money)
+    ;;
   --help|-h|help)
     cat <<'EOF'
 Usage:
@@ -54,6 +60,7 @@ Usage:
   ./scripts/validate-playwright.sh e2e-ui
   ./scripts/validate-playwright.sh smoke
   ./scripts/validate-playwright.sh phase3-no-llm
+  ./scripts/validate-playwright.sh costs-money  # COSTS REAL MONEY with live LLM credentials
   ./scripts/validate-playwright.sh tests/overview-smoke.spec.ts
 
 Environment overrides:
@@ -62,6 +69,7 @@ Environment overrides:
   PLAYWRIGHT_API_URL
   PLAYWRIGHT_PLATFORM_API_URL  # optional; edge-proxy HTTP test compares against raw platform-api (default http://platform-api:8000)
   PLAYWRIGHT_DOCKER_NETWORK
+  PLAYWRIGHT_COSTS_MONEY_ABORT_BEFORE_SEND=1  # start paid diagnostics without sending the provider request
 EOF
     exit 0
     ;;
@@ -75,6 +83,9 @@ echo "==> Playwright image: ${PLAYWRIGHT_IMAGE}"
 echo "==> Base URL: ${PLAYWRIGHT_BASE_URL}"
 echo "==> API URL: ${PLAYWRIGHT_API_URL}"
 echo "==> Docker network: ${PLAYWRIGHT_DOCKER_NETWORK}"
+if [[ "${PLAYWRIGHT_ALLOW_COSTLY_LLM_TESTS}" == "1" ]]; then
+  echo "==> COSTS MONEY tests enabled"
+fi
 
 docker run --rm \
   --init \
@@ -87,6 +98,8 @@ docker run --rm \
   --env npm_config_cache=/tmp/npm-cache \
   --env PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL}" \
   --env PLAYWRIGHT_API_URL="${PLAYWRIGHT_API_URL}" \
+  --env PLAYWRIGHT_ALLOW_COSTLY_LLM_TESTS="${PLAYWRIGHT_ALLOW_COSTLY_LLM_TESTS}" \
+  --env PLAYWRIGHT_COSTS_MONEY_ABORT_BEFORE_SEND="${PLAYWRIGHT_COSTS_MONEY_ABORT_BEFORE_SEND}" \
   --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
   "${PLAYWRIGHT_IMAGE}" \
   bash -lc 'npm ci && exec "$@"' bash "${runner_cmd[@]}"
