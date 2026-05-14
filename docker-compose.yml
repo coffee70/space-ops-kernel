@@ -80,6 +80,7 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080,http://platform-edge-proxy:8080
       PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
       PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PLATFORM_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PLATFORM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       PLATFORM_API_BASE_URL: http://platform-api:8000
       PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100

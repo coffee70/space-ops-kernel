@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     database_url: str = Field(..., min_length=1)
     platform_database_url: str = "postgresql://telemetry:telemetry@postgres:5432/telemetry_db"
     platform_openai_api_key: str = ""
+    platform_anthropic_api_key: str = ""
     platform_openai_base_url: str = ""
     platform_api_base_url: str = "http://platform-api:8000"
     platform_control_plane_url: str = "http://control-plane:8100"

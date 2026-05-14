@@ -267,6 +267,7 @@ class DeploymentService:
                 {
                     "DATABASE_URL": self.settings.platform_database_url,
                     "OPENAI_API_KEY": self.settings.platform_openai_api_key,
+                    "ANTHROPIC_API_KEY": self.settings.platform_anthropic_api_key,
                     "OPENAI_BASE_URL": self.settings.platform_openai_base_url,
                     "PLATFORM_API_BASE_URL": self.settings.platform_api_base_url,
                     "VEHICLE_CONFIG_ROOT": self.settings.platform_vehicle_config_root,
