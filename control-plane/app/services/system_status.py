@@ -26,7 +26,7 @@ from app.services.bootstrap_service import BOOTSTRAP_UNITS
 from app.services.bootstrap_status import RuntimeBootstrapStatusService
 
 WARNING_STATES = {"deploying", "stale", "unknown", "skipped"}
-BROKEN_STATES = {"missing", "failed", "crashed"}
+BROKEN_STATES = {"missing", "failed", "crashed", "blocked"}
 HEALTHY_STATES = {"healthy"}
 
 
@@ -235,6 +235,8 @@ class SystemStatusService:
             return "deploying"
         if bootstrap_status == "failed":
             return "failed"
+        if bootstrap_status == "blocked":
+            return "blocked"
         if bootstrap_status == "skipped":
             return "skipped"
         if container is not None:
@@ -330,6 +332,7 @@ class SystemStatusService:
             completed_at=snapshot.get("completed_at"),
             failure_reason=snapshot.get("failure_reason"),
             summary=snapshot.get("summary", {}),
+            dependency_issues=snapshot.get("dependency_issues", {}),
         )
 
     def _parse_container_output(self, output: str) -> dict[str, ContainerStatus]:

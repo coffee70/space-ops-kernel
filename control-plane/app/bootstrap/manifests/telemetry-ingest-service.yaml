@@ -7,11 +7,14 @@ source_path: project/space-ops-platform
 build:
   command: pip install -r requirements.txt
 run:
-  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/telemetry-ingest-service --host 0.0.0.0 --port 8080"
+  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/telemetry-ingest-service
+    --host 0.0.0.0 --port 8080"
 health:
   type: http
   path: /health
   port: 8080
+dependencies:
+  - source-registry-service
 discovery:
   service_slug: telemetry-ingest-service
   category: telemetry
@@ -22,5 +25,3 @@ discovery:
     - feed-health
   health_endpoint: /health
   visibility: internal
-  depends_on:
-    - source-registry-service

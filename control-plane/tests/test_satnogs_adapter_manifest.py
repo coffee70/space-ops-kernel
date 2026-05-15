@@ -21,7 +21,7 @@ def test_satnogs_adapter_manifest_declares_adapter_capabilities() -> None:
     assert {"adapter", "satnogs", "ax25", "aprs", "observation-sync", "realtime-ingest"} <= set(
         manifest["discovery"]["capability_tags"]
     )
-    assert {"source-registry-service", "telemetry-ingest-service"} <= set(manifest["discovery"]["depends_on"])
+    assert {"source-registry-service", "telemetry-ingest-service"} <= set(manifest["dependencies"])
 
 
 def test_simulator_manifests_declare_provider_capabilities() -> None:
@@ -41,4 +41,4 @@ def test_simulator_manifests_declare_provider_capabilities() -> None:
             "scenario-streaming",
             "realtime",
         } <= set(manifest["discovery"]["capability_tags"])
-        assert {"source-registry-service", "telemetry-ingest-service"} <= set(manifest["discovery"]["depends_on"])
+        assert {"source-registry-service", "telemetry-ingest-service"} <= set(manifest["dependencies"])

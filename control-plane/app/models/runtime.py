@@ -98,6 +98,7 @@ class RuntimeBootstrapRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dependency_issues_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class RuntimeBootstrapUnit(Base):

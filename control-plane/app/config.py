@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     deployment_command_timeout_seconds: int = 300
     deployment_health_timeout_seconds: int = 45
     deployment_health_poll_interval_seconds: float = 1.5
+    runtime_bootstrap_max_parallel_deployments: int = 3
     runtime_proxy_connect_timeout_seconds: float = 2.0
     runtime_proxy_read_timeout_seconds: float = 8.0
     proxy_allowed_schemes: tuple[str, ...] = ("http",)

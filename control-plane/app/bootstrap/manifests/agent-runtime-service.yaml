@@ -13,6 +13,11 @@ health:
   path: /health
   port: 8080
 mounts: []
+dependencies:
+  - model-registry-service
+  - context-retrieval-service
+  - tool-registry-service
+  - tool-execution-service
 discovery:
   service_slug: agent-runtime-service
   category: intelligence
@@ -23,8 +28,3 @@ discovery:
     - chat
   health_endpoint: /health
   visibility: internal
-  depends_on:
-    - model-registry-service
-    - context-retrieval-service
-    - tool-registry-service
-    - tool-execution-service

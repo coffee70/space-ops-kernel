@@ -182,6 +182,30 @@ def test_bootstrap_status_is_merged_onto_runtime_rows(tmp_path: Path) -> None:
     assert row.ui_state == "deploying"
 
 
+def test_blocked_bootstrap_status_is_broken_with_reason(tmp_path: Path) -> None:
+    service = _service(_settings(tmp_path))
+    service.registry = FakeRegistry()  # type: ignore[assignment]
+
+    summary = service._build_runtime_summary(
+        {},
+        False,
+        {
+            "units": [
+                {
+                    "unit_id": "vehicle-config-service",
+                    "status": "blocked",
+                    "failure_reason": "Blocked because required dependency source-registry-service failed during bootstrap.",
+                }
+            ]
+        },
+    )
+    row = summary.services[0]
+
+    assert row.ui_state == "blocked"
+    assert row.failure_reason.startswith("Blocked because required dependency")
+    assert service._summarize([row]).broken_count == 1
+
+
 def test_overall_state_prioritizes_broken_then_degraded_then_healthy(tmp_path: Path) -> None:
     service = _service(_settings(tmp_path))
     service.registry = FakeRegistry()  # type: ignore[assignment]

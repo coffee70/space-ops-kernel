@@ -7,11 +7,15 @@ source_path: project/space-ops-platform
 build:
   command: pip install -r requirements.txt
 run:
-  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/simulator-control-service --host 0.0.0.0 --port 8080"
+  command: sh -c "cd /app/platform/backend && uvicorn main:app --app-dir services/simulator-control-service
+    --host 0.0.0.0 --port 8080"
 health:
   type: http
   path: /health
   port: 8080
+dependencies:
+  - source-registry-service
+  - position-orbit-service
 discovery:
   service_slug: simulator-control-service
   category: simulator
@@ -21,6 +25,3 @@ discovery:
     - runtime-control
   health_endpoint: /health
   visibility: internal
-  depends_on:
-    - source-registry-service
-    - position-orbit-service

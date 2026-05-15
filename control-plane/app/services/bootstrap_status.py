@@ -23,8 +23,11 @@ UNIT_CURRENT = "current"
 UNIT_DEPLOYING = "deploying"
 UNIT_HEALTHY = "healthy"
 UNIT_FAILED = "failed"
+UNIT_BLOCKED = "blocked"
 
-UNIT_STATUSES = (UNIT_PENDING, UNIT_SKIPPED, UNIT_CURRENT, UNIT_DEPLOYING, UNIT_HEALTHY, UNIT_FAILED)
+UNIT_STATUSES = (UNIT_PENDING, UNIT_SKIPPED, UNIT_CURRENT, UNIT_DEPLOYING, UNIT_HEALTHY, UNIT_FAILED, UNIT_BLOCKED)
+
+EMPTY_DEPENDENCY_ISSUES = {"cycles": [], "blocked_units": [], "invalid_dependencies": []}
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -94,18 +97,48 @@ class RuntimeBootstrapStatusService:
             completed=True,
         )
 
+    def mark_unit_blocked(
+        self,
+        run_id: int,
+        unit_id: str,
+        reason: str,
+        deployment_id: str | None = None,
+    ) -> None:
+        self._mark_unit(
+            run_id,
+            unit_id,
+            status=UNIT_BLOCKED,
+            deployment_id=deployment_id,
+            failure_reason=reason,
+            started=True,
+            completed=True,
+        )
+
+    def set_dependency_issues(self, run_id: int, dependency_issues: dict) -> None:
+        now = utcnow()
+        with self.session_factory() as session:
+            run = session.get(RuntimeBootstrapRun, run_id)
+            if run is None:
+                return
+            run.dependency_issues_json = dependency_issues
+            run.updated_at = now
+            session.commit()
+
     def finish_run(self, run_id: int, failure_reason: str | None = None) -> None:
         now = utcnow()
         with self.session_factory() as session:
             run = session.get(RuntimeBootstrapRun, run_id)
             if run is None:
                 return
-            failed_count = (
+            incomplete_count = (
                 session.query(RuntimeBootstrapUnit)
-                .filter(RuntimeBootstrapUnit.run_id == run_id, RuntimeBootstrapUnit.status == UNIT_FAILED)
+                .filter(
+                    RuntimeBootstrapUnit.run_id == run_id,
+                    RuntimeBootstrapUnit.status.in_((UNIT_FAILED, UNIT_BLOCKED, UNIT_SKIPPED)),
+                )
                 .count()
             )
-            run.status = RUN_FAILED if failure_reason else RUN_COMPLETED_WITH_FAILURES if failed_count else RUN_COMPLETED
+            run.status = RUN_FAILED if failure_reason else RUN_COMPLETED_WITH_FAILURES if incomplete_count else RUN_COMPLETED
             run.completed_at = now
             run.updated_at = now
             run.failure_reason = failure_reason
@@ -120,6 +153,7 @@ class RuntimeBootstrapStatusService:
                     "started_at": None,
                     "completed_at": None,
                     "summary": {status: 0 for status in UNIT_STATUSES},
+                    "dependency_issues": EMPTY_DEPENDENCY_ISSUES,
                     "units": [],
                 }
             units = (
@@ -137,6 +171,7 @@ class RuntimeBootstrapStatusService:
                 "completed_at": _iso(run.completed_at),
                 "failure_reason": run.failure_reason,
                 "summary": summary,
+                "dependency_issues": run.dependency_issues_json or EMPTY_DEPENDENCY_ISSUES,
                 "units": [
                     {
                         "unit_id": unit.unit_id,
