@@ -88,6 +88,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("failure_reason", sa.Text(), nullable=True),
+        sa.Column("dependency_issues_json", sa.JSON(), nullable=False),
     )
     op.create_index("ix_runtime_bootstrap_runs_status", "runtime_bootstrap_runs", ["status"])
 

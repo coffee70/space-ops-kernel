@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -85,11 +86,52 @@ class RuntimeBootstrapResult:
         return [unit for unit in self.units if unit.status == "failed"]
 
     @property
+    def blocked_units(self) -> list[RuntimeUnitBootstrapResult]:
+        return [unit for unit in self.units if unit.status == "blocked"]
+
+    @property
     def healthy_units(self) -> list[RuntimeUnitBootstrapResult]:
         return [unit for unit in self.units if unit.status in {"healthy", "current"}]
 
     def add(self, unit: RuntimeUnitBootstrapResult) -> None:
         self.units.append(unit)
+
+
+@dataclass(frozen=True)
+class DependencyCycle:
+    units: tuple[str, ...]
+    path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BlockedDependency:
+    unit_id: str
+    reason: str
+    message: str
+    blocking_units: tuple[str, ...] = ()
+
+
+@dataclass
+class BootstrapDependencyPlan:
+    dependencies: dict[str, tuple[str, ...]]
+    dependents: dict[str, tuple[str, ...]]
+    cycles: list[DependencyCycle] = field(default_factory=list)
+    invalid_dependencies: list[dict[str, str]] = field(default_factory=list)
+    blocked: dict[str, BlockedDependency] = field(default_factory=dict)
+
+    def dependency_issues(self) -> dict[str, list[dict]]:
+        return {
+            "cycles": [{"units": list(cycle.units), "path": list(cycle.path)} for cycle in self.cycles],
+            "blocked_units": [
+                {
+                    "unit_id": blocked.unit_id,
+                    "reason": blocked.reason,
+                    "blocking_units": list(blocked.blocking_units),
+                }
+                for blocked in self.blocked.values()
+            ],
+            "invalid_dependencies": list(self.invalid_dependencies),
+        }
 
 
 class RuntimeBootstrapStatusTracker(Protocol):
@@ -104,6 +146,10 @@ class RuntimeBootstrapStatusTracker(Protocol):
     def mark_unit_healthy(self, run_id: int, unit_id: str, deployment_id: str | None = None) -> None: ...
 
     def mark_unit_failed(self, run_id: int, unit_id: str, reason: str, deployment_id: str | None = None) -> None: ...
+
+    def mark_unit_blocked(self, run_id: int, unit_id: str, reason: str, deployment_id: str | None = None) -> None: ...
+
+    def set_dependency_issues(self, run_id: int, dependency_issues: dict) -> None: ...
 
 
 class ManagedForkBootstrapper:
@@ -288,71 +334,307 @@ class RuntimeBootstrapper:
         commit_sha = repository.get_head_commit("main")
         session_factory = get_session_factory()
         bootstrap_result = RuntimeBootstrapResult()
+        manifests = self._load_bootstrap_manifests()
+        plan = self._build_dependency_plan(manifests)
+        unit_statuses: dict[str, str] = {}
 
         for unit_id in BOOTSTRAP_UNITS:
-            deployment_id: str | None = None
-            try:
-                with session_factory() as session:
-                    deployment_service = DeploymentService(self.settings, repository, session)
-                    registry = RegistryService(session)
+            blocked = plan.blocked.get(unit_id)
+            if blocked is None:
+                continue
+            unit_result = RuntimeUnitBootstrapResult(unit_id, "blocked", failure_reason=blocked.message)
+            bootstrap_result.add(unit_result)
+            unit_statuses[unit_id] = "blocked"
+            self._record_status(status_tracker, run_id, unit_result)
+            logger.error("runtime bootstrap unit blocked: %s reason=%s", unit_id, blocked.message)
 
-                    current_deployment_id = self._current_deployment_id(registry, deployment_service, unit_id, commit_sha)
-                    if current_deployment_id is not None:
-                        unit_result = RuntimeUnitBootstrapResult(unit_id, "current", current_deployment_id)
-                        session.commit()
-                        self._record_status(status_tracker, run_id, unit_result)
-                        bootstrap_result.add(unit_result)
-                        logger.info("runtime bootstrap unit current: %s", unit_id)
-                        continue
+        self._record_dependency_issues(status_tracker, run_id, plan)
 
-                    if not self._bootstrap_source_exists(deployment_service, unit_id, commit_sha):
-                        unit_result = RuntimeUnitBootstrapResult(unit_id, "skipped", failure_reason="bootstrap source missing")
-                        session.commit()
-                        self._record_status(status_tracker, run_id, unit_result)
-                        bootstrap_result.add(unit_result)
-                        logger.info("runtime bootstrap unit skipped: %s", unit_id)
-                        continue
-
-                    if status_tracker is not None and run_id is not None:
-                        status_tracker.mark_unit_deploying(run_id, unit_id)
-                    result = deployment_service.submit(
-                        DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
-                        delete_eligible=False,
-                    )
-                    deployment_id = result.deployment_id
-                    session.commit()
-                    if result.status == "healthy":
-                        unit_result = RuntimeUnitBootstrapResult(unit_id, "healthy", result.deployment_id)
-                        logger.info("runtime bootstrap unit healthy: %s deployment=%s", unit_id, result.deployment_id)
-                    else:
-                        reason = result.failure_reason or result.status
-                        unit_result = RuntimeUnitBootstrapResult(unit_id, "failed", result.deployment_id, reason)
-                        logger.error("runtime bootstrap unit failed: %s reason=%s", unit_id, reason)
-                    self._record_status(status_tracker, run_id, unit_result)
+        while len(unit_statuses) < len(BOOTSTRAP_UNITS):
+            ready_units = self._ready_units(plan.dependencies, unit_statuses)
+            if not ready_units:
+                unresolved = [unit_id for unit_id in BOOTSTRAP_UNITS if unit_id not in unit_statuses]
+                for unit_id in unresolved:
+                    message = "Blocked because required dependencies could not become available."
+                    unit_result = RuntimeUnitBootstrapResult(unit_id, "blocked", failure_reason=message)
                     bootstrap_result.add(unit_result)
-            except Exception as exc:
-                reason = str(exc) or type(exc).__name__
-                unit_result = RuntimeUnitBootstrapResult(unit_id, "failed", deployment_id, reason)
+                    unit_statuses[unit_id] = "blocked"
+                    plan.blocked[unit_id] = BlockedDependency(unit_id, "dependency_unavailable", message)
+                    self._record_status(status_tracker, run_id, unit_result)
+                self._record_dependency_issues(status_tracker, run_id, plan)
+                break
+
+            wave_results = self._run_parallel_wave(
+                ready_units,
+                repository=repository,
+                commit_sha=commit_sha,
+                session_factory=session_factory,
+                status_tracker=status_tracker,
+                run_id=run_id,
+                fail_fast=fail_fast,
+            )
+            for unit_result in wave_results:
                 bootstrap_result.add(unit_result)
+                unit_statuses[unit_result.unit_id] = unit_result.status
                 self._record_status(status_tracker, run_id, unit_result)
-                logger.exception("runtime bootstrap unit failed: %s reason=%s", unit_id, reason)
-                if fail_fast:
-                    raise
+
+            new_blocked = self._blocked_by_unsatisfied_dependencies(plan, unit_statuses)
+            for blocked in new_blocked:
+                unit_result = RuntimeUnitBootstrapResult(blocked.unit_id, "blocked", failure_reason=blocked.message)
+                bootstrap_result.add(unit_result)
+                unit_statuses[blocked.unit_id] = "blocked"
+                plan.blocked[blocked.unit_id] = blocked
+                self._record_status(status_tracker, run_id, unit_result)
+                logger.error("runtime bootstrap unit blocked: %s reason=%s", blocked.unit_id, blocked.message)
+            if new_blocked:
+                self._record_dependency_issues(status_tracker, run_id, plan)
 
         summary = {
             "healthy": len([unit for unit in bootstrap_result.units if unit.status == "healthy"]),
             "current": len([unit for unit in bootstrap_result.units if unit.status == "current"]),
             "skipped": len([unit for unit in bootstrap_result.units if unit.status == "skipped"]),
             "failed": len(bootstrap_result.failed_units),
+            "blocked": len(bootstrap_result.blocked_units),
         }
         logger.info(
-            "runtime bootstrap completed: healthy=%s current=%s skipped=%s failed=%s",
+            "runtime bootstrap completed: healthy=%s current=%s skipped=%s failed=%s blocked=%s",
             summary["healthy"],
             summary["current"],
             summary["skipped"],
             summary["failed"],
+            summary["blocked"],
         )
         return bootstrap_result
+
+    def _load_bootstrap_manifests(self) -> dict[str, UnitManifest]:
+        manifests: dict[str, UnitManifest] = {}
+        roots = (
+            self.settings.main_worktree_dir / "manifests" / "units",
+            self.settings.kernel_root / "control-plane" / "app" / "bootstrap" / "manifests",
+        )
+        for unit_id in BOOTSTRAP_UNITS:
+            manifest_path = next((root / f"{unit_id}.yaml" for root in roots if (root / f"{unit_id}.yaml").is_file()), None)
+            if manifest_path is None:
+                raise FileNotFoundError(f"bootstrap manifest not found for {unit_id}")
+            manifests[unit_id] = UnitManifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
+        return manifests
+
+    def _build_dependency_plan(self, manifests: dict[str, UnitManifest]) -> BootstrapDependencyPlan:
+        known_units = set(BOOTSTRAP_UNITS)
+        dependencies: dict[str, tuple[str, ...]] = {}
+        dependents: dict[str, list[str]] = {unit_id: [] for unit_id in BOOTSTRAP_UNITS}
+        plan = BootstrapDependencyPlan(dependencies={}, dependents={})
+
+        for unit_id in BOOTSTRAP_UNITS:
+            manifest = manifests[unit_id]
+            seen: set[str] = set()
+            normalized: list[str] = []
+            for dependency in manifest.dependencies:
+                if dependency in seen:
+                    continue
+                seen.add(dependency)
+                normalized.append(dependency)
+                if dependency not in known_units:
+                    message = f"Blocked because manifest dependency '{dependency}' is not a known bootstrap unit."
+                    plan.invalid_dependencies.append({"unit_id": unit_id, "dependency": dependency})
+                    plan.blocked[unit_id] = BlockedDependency(unit_id, "unknown_dependency", message, (dependency,))
+            dependencies[unit_id] = tuple(normalized)
+            for dependency in normalized:
+                if dependency in dependents:
+                    dependents[dependency].append(unit_id)
+
+        plan.dependencies = dependencies
+        plan.dependents = {unit_id: tuple(children) for unit_id, children in dependents.items()}
+
+        cycles = self._detect_cycles(dependencies)
+        plan.cycles = cycles
+        for cycle in cycles:
+            path = " -> ".join(cycle.path)
+            for unit_id in cycle.units:
+                plan.blocked[unit_id] = BlockedDependency(
+                    unit_id,
+                    "dependency_cycle",
+                    f"Blocked by dependency cycle: {path}.",
+                    cycle.units,
+                )
+            for downstream in self._collect_downstream(set(cycle.units), plan.dependents):
+                if downstream in cycle.units or downstream in plan.blocked:
+                    continue
+                plan.blocked[downstream] = BlockedDependency(
+                    downstream,
+                    "dependency_blocked",
+                    f"Blocked because dependency chain includes a cyclic unit: {cycle.units[0]}.",
+                    (cycle.units[0],),
+                )
+
+        for blocked in list(plan.blocked.values()):
+            if blocked.reason == "unknown_dependency":
+                for downstream in self._collect_downstream({blocked.unit_id}, plan.dependents):
+                    if downstream in plan.blocked:
+                        continue
+                    plan.blocked[downstream] = BlockedDependency(
+                        downstream,
+                        "dependency_blocked",
+                        f"Blocked because dependency {blocked.unit_id} could not become available.",
+                        (blocked.unit_id,),
+                    )
+        return plan
+
+    def _detect_cycles(self, dependencies: dict[str, tuple[str, ...]]) -> list[DependencyCycle]:
+        cycles: list[DependencyCycle] = []
+        cycle_keys: set[frozenset[str]] = set()
+        visiting: list[str] = []
+        visited: set[str] = set()
+
+        def visit(unit_id: str) -> None:
+            if unit_id in visiting:
+                start = visiting.index(unit_id)
+                path = tuple(visiting[start:] + [unit_id])
+                units = tuple(dict.fromkeys(path[:-1]))
+                key = frozenset(units)
+                if key not in cycle_keys:
+                    cycle_keys.add(key)
+                    cycles.append(DependencyCycle(units=units, path=path))
+                return
+            if unit_id in visited:
+                return
+            visiting.append(unit_id)
+            for dependency in dependencies.get(unit_id, ()):
+                if dependency in dependencies:
+                    visit(dependency)
+            visiting.pop()
+            visited.add(unit_id)
+
+        for unit_id in BOOTSTRAP_UNITS:
+            visit(unit_id)
+        return cycles
+
+    def _collect_downstream(self, unit_ids: set[str], dependents: dict[str, tuple[str, ...]]) -> set[str]:
+        blocked: set[str] = set()
+        stack = list(unit_ids)
+        while stack:
+            current = stack.pop()
+            for child in dependents.get(current, ()):
+                if child in blocked:
+                    continue
+                blocked.add(child)
+                stack.append(child)
+        return blocked
+
+    def _ready_units(self, dependencies: dict[str, tuple[str, ...]], unit_statuses: dict[str, str]) -> list[str]:
+        satisfying = {"healthy", "current"}
+        ready: list[str] = []
+        for unit_id in BOOTSTRAP_UNITS:
+            if unit_id in unit_statuses:
+                continue
+            if all(unit_statuses.get(dependency) in satisfying for dependency in dependencies.get(unit_id, ())):
+                ready.append(unit_id)
+        return ready
+
+    def _run_parallel_wave(
+        self,
+        unit_ids: list[str],
+        *,
+        repository: ManagedGitRepository,
+        commit_sha: str,
+        session_factory,
+        status_tracker: RuntimeBootstrapStatusTracker | None,
+        run_id: int | None,
+        fail_fast: bool,
+    ) -> list[RuntimeUnitBootstrapResult]:
+        for unit_id in unit_ids:
+            if status_tracker is not None and run_id is not None:
+                status_tracker.mark_unit_deploying(run_id, unit_id)
+
+        max_workers = max(1, min(self.settings.runtime_bootstrap_max_parallel_deployments, len(unit_ids)))
+        results: dict[str, RuntimeUnitBootstrapResult] = {}
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="runtime-bootstrap") as executor:
+            futures = {
+                executor.submit(self._bootstrap_unit, unit_id, repository, commit_sha, session_factory, fail_fast): unit_id
+                for unit_id in unit_ids
+            }
+            for future in as_completed(futures):
+                unit_id = futures[future]
+                results[unit_id] = future.result()
+        return [results[unit_id] for unit_id in unit_ids]
+
+    def _bootstrap_unit(
+        self,
+        unit_id: str,
+        repository: ManagedGitRepository,
+        commit_sha: str,
+        session_factory,
+        fail_fast: bool,
+    ) -> RuntimeUnitBootstrapResult:
+        deployment_id: str | None = None
+        try:
+            with session_factory() as session:
+                deployment_service = DeploymentService(self.settings, repository, session)
+                registry = RegistryService(session)
+                current_deployment_id = self._current_deployment_id(registry, deployment_service, unit_id, commit_sha)
+                if current_deployment_id is not None:
+                    session.commit()
+                    logger.info("runtime bootstrap unit current: %s", unit_id)
+                    return RuntimeUnitBootstrapResult(unit_id, "current", current_deployment_id)
+
+                if not self._bootstrap_source_exists(deployment_service, unit_id, commit_sha):
+                    session.commit()
+                    logger.info("runtime bootstrap unit skipped: %s", unit_id)
+                    return RuntimeUnitBootstrapResult(unit_id, "skipped", failure_reason="bootstrap source missing")
+
+                result = deployment_service.submit(
+                    DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
+                    delete_eligible=False,
+                )
+                deployment_id = result.deployment_id
+                session.commit()
+                if result.status == "healthy":
+                    logger.info("runtime bootstrap unit healthy: %s deployment=%s", unit_id, result.deployment_id)
+                    return RuntimeUnitBootstrapResult(unit_id, "healthy", result.deployment_id)
+                reason = result.failure_reason or result.status
+                logger.error("runtime bootstrap unit failed: %s reason=%s", unit_id, reason)
+                return RuntimeUnitBootstrapResult(unit_id, "failed", result.deployment_id, reason)
+        except Exception as exc:
+            reason = str(exc) or type(exc).__name__
+            logger.exception("runtime bootstrap unit failed: %s reason=%s", unit_id, reason)
+            if fail_fast:
+                raise
+            return RuntimeUnitBootstrapResult(unit_id, "failed", deployment_id, reason)
+
+    def _blocked_by_unsatisfied_dependencies(
+        self,
+        plan: BootstrapDependencyPlan,
+        unit_statuses: dict[str, str],
+    ) -> list[BlockedDependency]:
+        satisfying = {"healthy", "current"}
+        unsatisfying = {
+            unit_id: status
+            for unit_id, status in unit_statuses.items()
+            if status not in satisfying and status in {"failed", "blocked", "skipped"}
+        }
+        blocked: list[BlockedDependency] = []
+        for unit_id in BOOTSTRAP_UNITS:
+            if unit_id in unit_statuses or unit_id in plan.blocked:
+                continue
+            for dependency in plan.dependencies.get(unit_id, ()):
+                status = unsatisfying.get(dependency)
+                if status is None:
+                    continue
+                reason = "dependency_blocked" if status == "blocked" else "dependency_failed"
+                state_text = "failed during bootstrap" if status == "failed" else "could not become available"
+                message = f"Blocked because required dependency {dependency} {state_text}."
+                blocked.append(BlockedDependency(unit_id, reason, message, (dependency,)))
+                break
+        return blocked
+
+    def _record_dependency_issues(
+        self,
+        status_tracker: RuntimeBootstrapStatusTracker | None,
+        run_id: int | None,
+        plan: BootstrapDependencyPlan,
+    ) -> None:
+        if status_tracker is not None and run_id is not None:
+            status_tracker.set_dependency_issues(run_id, plan.dependency_issues())
 
     def _bootstrap_source_exists(self, deployment_service: DeploymentService, unit_id: str, commit_sha: str) -> bool:
         manifest = deployment_service._load_manifest(commit_sha, unit_id)
@@ -415,6 +697,13 @@ class RuntimeBootstrapper:
                 run_id,
                 result.unit_id,
                 result.failure_reason or "runtime bootstrap failed",
+                result.deployment_id,
+            )
+        elif result.status == "blocked":
+            status_tracker.mark_unit_blocked(
+                run_id,
+                result.unit_id,
+                result.failure_reason or "runtime bootstrap blocked",
                 result.deployment_id,
             )
 

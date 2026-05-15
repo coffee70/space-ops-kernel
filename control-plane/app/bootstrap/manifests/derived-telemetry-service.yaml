@@ -20,4 +20,3 @@ discovery:
     - telemetry
     - derived
   health_endpoint: /health
-

@@ -73,10 +73,12 @@ def test_bootstrap_puts_model_registry_before_agent_runtime_then_gateway() -> No
 def test_model_registry_manifest_has_no_runtime_dependencies() -> None:
     root = Path(__file__).resolve().parents[1]
     mr = yaml.safe_load((root / "app/bootstrap/manifests/model-registry-service.yaml").read_text(encoding="utf-8"))
-    assert mr.get("discovery", {}).get("depends_on", []) == []
+    assert mr.get("dependencies", []) == []
+    assert "depends_on" not in mr.get("discovery", {})
 
 
-def test_gateway_discovery_depends_on_model_registry_service() -> None:
+def test_gateway_depends_on_model_registry_service() -> None:
     root = Path(__file__).resolve().parents[1]
     gw = yaml.safe_load((root / "app/bootstrap/manifests/platform-api-gateway.yaml").read_text(encoding="utf-8"))
-    assert "model-registry-service" in gw.get("discovery", {}).get("depends_on", [])
+    assert "model-registry-service" in gw.get("dependencies", [])
+    assert "depends_on" not in gw.get("discovery", {})

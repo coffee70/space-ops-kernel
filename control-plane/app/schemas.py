@@ -445,6 +445,7 @@ class UnitManifest(StrictBaseModel):
     build: BuildSpec
     run: RunSpec
     health: HealthSpec
+    dependencies: list[str] = Field(default_factory=list)
     discovery: dict[str, Any] = Field(default_factory=dict)
     application: ApplicationManifestDefinition | None = None
     mounts: list[VolumeMountSpec] = Field(default_factory=list)
@@ -452,6 +453,8 @@ class UnitManifest(StrictBaseModel):
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "UnitManifest":
+        if "depends_on" in self.discovery:
+            raise ValueError("manifest dependencies must use top-level dependencies")
         if self.runtime_kind == "service":
             if self.application is not None:
                 raise ValueError("service manifests cannot define application metadata")
@@ -664,7 +667,31 @@ DeploymentUiState = Literal[
     "crashed",
     "unknown",
     "skipped",
+    "blocked",
 ]
+
+
+class BootstrapDependencyCycle(BaseModel):
+    """Structured dependency cycle diagnostic."""
+
+    units: list[str]
+    path: list[str]
+
+
+class BootstrapBlockedDependencyIssue(BaseModel):
+    """Structured blocked-unit dependency diagnostic."""
+
+    unit_id: str
+    reason: str
+    blocking_units: list[str] = Field(default_factory=list)
+
+
+class BootstrapDependencyIssues(BaseModel):
+    """Structured bootstrap dependency diagnostics."""
+
+    cycles: list[BootstrapDependencyCycle] = Field(default_factory=list)
+    blocked_units: list[BootstrapBlockedDependencyIssue] = Field(default_factory=list)
+    invalid_dependencies: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ServiceStatusItem(BaseModel):
@@ -717,6 +744,7 @@ class BootstrapSummary(BaseModel):
     completed_at: str | None = None
     failure_reason: str | None = None
     summary: dict[str, int] = Field(default_factory=dict)
+    dependency_issues: BootstrapDependencyIssues = Field(default_factory=BootstrapDependencyIssues)
 
 
 class SystemDeploymentOverviewResponse(BaseModel):

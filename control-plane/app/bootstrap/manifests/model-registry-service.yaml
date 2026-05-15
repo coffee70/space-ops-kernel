@@ -16,6 +16,7 @@ named_volumes:
   - name: model_registry_data
     target: /app/model-registry
     read_only: false
+dependencies: []
 discovery:
   service_slug: model-registry-service
   category: intelligence
@@ -26,4 +27,3 @@ discovery:
     - model-catalog
   health_endpoint: /health
   visibility: internal
-  depends_on: []
