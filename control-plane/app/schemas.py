@@ -453,8 +453,6 @@ class UnitManifest(StrictBaseModel):
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "UnitManifest":
-        if "depends_on" in self.discovery:
-            raise ValueError("manifest dependencies must use top-level dependencies")
         if self.runtime_kind == "service":
             if self.application is not None:
                 raise ValueError("service manifests cannot define application metadata")

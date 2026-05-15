@@ -127,6 +127,44 @@ def test_runtime_bootstrapper_units_match_seed_manifest_inventory() -> None:
     assert tuple(sorted(BOOTSTRAP_UNITS)) == manifest_unit_ids
 
 
+def test_runtime_bootstrapper_loads_manifests_from_managed_worktree_only(tmp_path: Path, monkeypatch) -> None:
+    from app.services import bootstrap_service
+    from app.services.bootstrap_service import RuntimeBootstrapper
+
+    main_worktree = tmp_path / "managed-fork" / "worktrees" / "main"
+    manifest_root = main_worktree / "manifests" / "units"
+    manifest_root.mkdir(parents=True)
+    (manifest_root / "only-unit.yaml").write_text(
+        """
+unit_id: only-unit
+display_name: Only Unit
+package_owner: space-ops-platform
+runtime_kind: service
+runtime_template: python-service
+source_path: project/space-ops-platform
+build:
+  command: echo build
+run:
+  command: echo run
+health:
+  type: http
+  path: /health
+  port: 8080
+dependencies: []
+discovery: {}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(bootstrap_service, "BOOTSTRAP_UNITS", ("only-unit",))
+    bootstrapper = RuntimeBootstrapper(SimpleNamespace(main_worktree_dir=main_worktree))
+
+    manifests = bootstrapper._load_bootstrap_manifests()
+
+    assert manifests["only-unit"].unit_id == "only-unit"
+    assert manifests["only-unit"].dependencies == []
+
+
 def test_runtime_bootstrapper_continues_after_failed_unit(monkeypatch) -> None:
     from app.services import bootstrap_service
     from app.services.bootstrap_service import RuntimeBootstrapper
@@ -180,6 +218,68 @@ def test_runtime_bootstrapper_continues_after_failed_unit(monkeypatch) -> None:
         ("bad-unit", "failed", "dep_bad"),
         ("later-unit", "blocked", None),
     ]
+
+
+def test_runtime_bootstrapper_failed_dependency_does_not_stop_unrelated_unit(monkeypatch) -> None:
+    from app.services import bootstrap_service
+    from app.services.bootstrap_service import RuntimeBootstrapper
+
+    attempted: list[str] = []
+
+    class DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def commit(self):
+            return None
+
+    class DummyDeploymentService:
+        def __init__(self, settings, repository, session):
+            return None
+
+        def submit(self, request, *, delete_eligible):
+            attempted.append(request.unit_id)
+            if request.unit_id == "bad-unit":
+                return SimpleNamespace(
+                    deployment_id="dep_bad",
+                    status="failed",
+                    failure_reason="synthetic failure",
+                )
+            return SimpleNamespace(deployment_id=f"dep_{request.unit_id}", status="healthy", failure_reason=None)
+
+    monkeypatch.setattr(bootstrap_service, "BOOTSTRAP_UNITS", ("bad-unit", "dependent-unit", "independent-unit"))
+    monkeypatch.setattr(bootstrap_service, "ManagedGitRepository", lambda settings: SimpleNamespace(get_head_commit=lambda branch: "abc123"))
+    monkeypatch.setattr(bootstrap_service, "get_session_factory", lambda: lambda: DummySession())
+    monkeypatch.setattr(bootstrap_service, "DeploymentService", DummyDeploymentService)
+    monkeypatch.setattr(bootstrap_service, "RegistryService", lambda session: object())
+    bootstrapper = RuntimeBootstrapper(
+        SimpleNamespace(main_worktree_dir=Path("/unused"), runtime_strategy="stub", runtime_bootstrap_max_parallel_deployments=2)
+    )
+    monkeypatch.setattr(
+        bootstrapper,
+        "_load_bootstrap_manifests",
+        lambda: {
+            "bad-unit": _manifest(),
+            "dependent-unit": _manifest("bad-unit"),
+            "independent-unit": _manifest(),
+        },
+    )
+    monkeypatch.setattr(bootstrapper, "_current_deployment_id", lambda registry, service, unit_id, commit_sha: None)
+    monkeypatch.setattr(bootstrapper, "_bootstrap_source_exists", lambda service, unit_id, commit_sha: True)
+
+    result = bootstrapper.ensure_bootstrapped(fail_fast=False)
+    statuses = {unit.unit_id: unit.status for unit in result.units}
+
+    assert statuses == {
+        "bad-unit": "failed",
+        "dependent-unit": "blocked",
+        "independent-unit": "healthy",
+    }
+    assert set(attempted) == {"bad-unit", "independent-unit"}
+    assert "dependent-unit" not in attempted
 
 
 def test_runtime_bootstrapper_records_current_and_skipped_units(monkeypatch) -> None:

@@ -408,13 +408,10 @@ class RuntimeBootstrapper:
 
     def _load_bootstrap_manifests(self) -> dict[str, UnitManifest]:
         manifests: dict[str, UnitManifest] = {}
-        roots = (
-            self.settings.main_worktree_dir / "manifests" / "units",
-            self.settings.kernel_root / "control-plane" / "app" / "bootstrap" / "manifests",
-        )
+        manifest_root = self.settings.main_worktree_dir / "manifests" / "units"
         for unit_id in BOOTSTRAP_UNITS:
-            manifest_path = next((root / f"{unit_id}.yaml" for root in roots if (root / f"{unit_id}.yaml").is_file()), None)
-            if manifest_path is None:
+            manifest_path = manifest_root / f"{unit_id}.yaml"
+            if not manifest_path.is_file():
                 raise FileNotFoundError(f"bootstrap manifest not found for {unit_id}")
             manifests[unit_id] = UnitManifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
         return manifests

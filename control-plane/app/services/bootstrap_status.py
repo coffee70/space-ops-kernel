@@ -171,7 +171,7 @@ class RuntimeBootstrapStatusService:
                 "completed_at": _iso(run.completed_at),
                 "failure_reason": run.failure_reason,
                 "summary": summary,
-                "dependency_issues": run.dependency_issues_json,
+                "dependency_issues": run.dependency_issues_json or EMPTY_DEPENDENCY_ISSUES,
                 "units": [
                     {
                         "unit_id": unit.unit_id,

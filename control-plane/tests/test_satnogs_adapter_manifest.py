@@ -22,7 +22,6 @@ def test_satnogs_adapter_manifest_declares_adapter_capabilities() -> None:
         manifest["discovery"]["capability_tags"]
     )
     assert {"source-registry-service", "telemetry-ingest-service"} <= set(manifest["dependencies"])
-    assert "depends_on" not in manifest["discovery"]
 
 
 def test_simulator_manifests_declare_provider_capabilities() -> None:
@@ -43,4 +42,3 @@ def test_simulator_manifests_declare_provider_capabilities() -> None:
             "realtime",
         } <= set(manifest["discovery"]["capability_tags"])
         assert {"source-registry-service", "telemetry-ingest-service"} <= set(manifest["dependencies"])
-        assert "depends_on" not in manifest["discovery"]
