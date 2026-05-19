@@ -26,6 +26,7 @@ def test_build_runtime_env_injects_model_registry_paths() -> None:
 
     assert env_mc.get("MODEL_CONFIG_PATH") == expected_path
     assert env_ar.get("MODEL_REGISTRY_BASE_URL") == f"{cp}/internal/runtime-services/model-registry-service"
+    assert env_ar.get("AGENT_RUNTIME_MAX_STEPS") == settings.platform_agent_runtime_max_steps
 
 
 def test_build_runtime_env_injects_persistent_vehicle_config_root_for_editor() -> None:

@@ -284,6 +284,7 @@ class DeploymentService:
                 cp_base = self.settings.platform_control_plane_url.rstrip("/")
                 env["MODEL_REGISTRY_BASE_URL"] = f"{cp_base}/internal/runtime-services/model-registry-service"
                 env["AGENT_RUNTIME_LOG_STREAM_PARTS"] = self.settings.platform_agent_runtime_log_stream_parts
+                env["AGENT_RUNTIME_MAX_STEPS"] = self.settings.platform_agent_runtime_max_steps
             if manifest.unit_id == "satnogs-adapter-service":
                 env.update(
                     {
