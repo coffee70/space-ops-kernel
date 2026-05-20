@@ -600,6 +600,22 @@ class RegistryUnitSummaryResponse(BaseModel):
         return RegistryServiceResponse.validate_safe_optional_text(value)
 
 
+class ActiveFrontendPreviewRuntimeResponse(BaseModel):
+    """Compact shell runtime preview context."""
+
+    is_preview: bool
+    frontend_unit_id: str | None = None
+    active_deployment_id: str | None = None
+    branch: str | None = None
+    commit_sha: str | None = None
+    deployment_status: str | None = None
+    health_status: str | None = None
+    baseline_branch: str = "main"
+    baseline_commit_sha: str | None = None
+    preview_deployment_id: str | None = None
+    target_application_id: str | None = None
+
+
 class DeploymentRecordResponse(BaseModel):
     """Deployment response."""
 
