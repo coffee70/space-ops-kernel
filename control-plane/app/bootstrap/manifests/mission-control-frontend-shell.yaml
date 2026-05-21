@@ -1,0 +1,21 @@
+unit_id: mission-control-frontend-shell
+display_name: Mission Control Frontend Shell
+package_owner: space-ops-apps
+runtime_kind: frontend_shell
+runtime_template: frontend-shell
+source_path: project/space-ops-apps/mission-control-ui
+build:
+  command: npm run build
+run:
+  command: node server.js
+health:
+  type: http
+  path: /health
+  port: 3000
+mounts: []
+dependencies: []
+discovery:
+  category: frontend
+  capability_tags:
+    - mission-control
+    - frontend-shell

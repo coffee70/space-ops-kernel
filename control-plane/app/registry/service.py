@@ -22,6 +22,7 @@ from app.models.runtime import (
     UnitHealthSnapshot,
 )
 from app.schemas import (
+    ActiveFrontendPreviewRuntimeResponse,
     PlatformApplicationDefinition,
     RuntimeRef,
     SeededApplicationDefinition,
@@ -299,6 +300,57 @@ class RegistryService:
         if deployment is None or deployment.status != "healthy":
             return None
         return deployment
+
+    def get_active_frontend_shell_unit(self) -> ManagedUnit | None:
+        """Return the canonical active frontend shell unit, when one exists."""
+
+        return (
+            self.session.query(ManagedUnit)
+            .filter(ManagedUnit.runtime_kind == "frontend_shell")
+            .order_by(ManagedUnit.display_name.asc(), ManagedUnit.unit_id.asc())
+            .first()
+        )
+
+    def serialize_active_frontend_preview_runtime(
+        self,
+        *,
+        baseline_branch: str = "main",
+    ) -> ActiveFrontendPreviewRuntimeResponse:
+        shell_unit = self.get_active_frontend_shell_unit()
+        if shell_unit is None:
+            return ActiveFrontendPreviewRuntimeResponse(is_preview=False, baseline_branch=baseline_branch)
+
+        deployment = self.get_active_deployment_for_unit(shell_unit.unit_id)
+        if deployment is None and shell_unit.active_deployment_id:
+            deployment = self.get_deployment(shell_unit.active_deployment_id)
+
+        branch = deployment.branch if deployment is not None else None
+        is_preview = bool(deployment is not None and branch != baseline_branch)
+        branch_record = (
+            self.session.query(ManagedBranch)
+            .filter(ManagedBranch.branch_name == branch)
+            .one_or_none()
+            if branch
+            else None
+        )
+        discovery = shell_unit.discovery_metadata_json if isinstance(shell_unit.discovery_metadata_json, dict) else {}
+        target_application_id = discovery.get("target_application_id")
+        if not isinstance(target_application_id, str):
+            target_application_id = None
+
+        return ActiveFrontendPreviewRuntimeResponse(
+            is_preview=is_preview,
+            frontend_unit_id=shell_unit.unit_id,
+            active_deployment_id=deployment.deployment_id if deployment is not None else shell_unit.active_deployment_id,
+            branch=branch,
+            commit_sha=deployment.commit_sha if deployment is not None else None,
+            deployment_status=deployment.status if deployment is not None else shell_unit.deployment_status,
+            health_status=deployment.health_status if deployment is not None else shell_unit.health_status,
+            baseline_branch=branch_record.base_branch if branch_record is not None else baseline_branch,
+            baseline_commit_sha=branch_record.base_commit_sha if branch_record is not None else None,
+            preview_deployment_id=deployment.deployment_id if is_preview and deployment is not None else None,
+            target_application_id=target_application_id,
+        )
 
     def get_runtime_ref_for_unit(self, unit_id: str) -> RuntimeRef | None:
         deployment = self.get_active_deployment_for_unit(unit_id)

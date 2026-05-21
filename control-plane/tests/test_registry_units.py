@@ -46,6 +46,18 @@ def test_registry_units_returns_safe_unit_catalog(client) -> None:
     assert unit["sourcePath"]
 
 
+def test_registry_units_includes_mission_control_frontend_shell(client) -> None:
+    response = client.get("/registry/units")
+
+    assert response.status_code == 200
+    unit = next(item for item in response.json() if item["unitId"] == "mission-control-frontend-shell")
+    assert unit["displayName"] == "Mission Control Frontend Shell"
+    assert unit["packageOwner"] == "space-ops-apps"
+    assert unit["runtimeKind"] == "frontend_shell"
+    assert unit["runtimeTemplate"] == "frontend-shell"
+    assert unit["sourcePath"] == "project/space-ops-apps/mission-control-ui"
+
+
 def test_registry_units_response_does_not_expose_runtime_or_deployment_internals(client) -> None:
     deployment = client.post("/deployments", json={"unit_id": "telemetry-ingest-service", "branch": "main"})
     assert deployment.status_code == 200
@@ -55,4 +67,3 @@ def test_registry_units_response_does_not_expose_runtime_or_deployment_internals
     assert response.status_code == 200
     for unit in response.json():
         assert FORBIDDEN_PUBLIC_FIELDS.isdisjoint(unit)
-

@@ -18,6 +18,7 @@ from app.models.runtime import ManagedUnit
 from app.registry.service import RegistryService
 from app.schemas import (
     APPLICATION_ID_PATTERN,
+    ActiveFrontendPreviewRuntimeResponse,
     PlatformApplicationDefinition,
     RegistryServiceResponse,
     RegistryUnitSummaryResponse,
@@ -217,6 +218,14 @@ def disable_application(application_id: str, session: Session = Depends(get_db))
 def get_units(session: Session = Depends(get_db)) -> list[RegistryUnitSummaryResponse]:
     registry = RegistryService(session)
     return _serialize_unit_summaries(registry.get_units(), registry)
+
+
+@router.get("/frontend-runtime/preview-context", response_model=ActiveFrontendPreviewRuntimeResponse)
+def get_frontend_runtime_preview_context(
+    session: Session = Depends(get_db),
+) -> ActiveFrontendPreviewRuntimeResponse:
+    registry = RegistryService(session)
+    return registry.serialize_active_frontend_preview_runtime()
 
 
 @router.get("/services", response_model=list[RegistryServiceResponse])
