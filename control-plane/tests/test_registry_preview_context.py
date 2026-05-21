@@ -33,19 +33,21 @@ def _add_frontend_shell(
 ):
     from app.models.runtime import ManagedUnit
 
-    unit = ManagedUnit(
-        unit_id="mission-control-frontend-shell",
-        display_name="Mission Control Frontend Shell",
-        package_owner="space-ops-apps",
-        runtime_kind="frontend_shell",
-        runtime_template="frontend-shell",
-        source_path="project/space-ops-apps/mission-control-ui",
-        deployment_status="healthy",
-        health_status="passing",
-        discovery_metadata_json=discovery or {},
-    )
-    session.add(unit)
-    session.flush()
+    unit = session.get(ManagedUnit, "mission-control-frontend-shell")
+    if unit is None:
+        unit = ManagedUnit(
+            unit_id="mission-control-frontend-shell",
+            display_name="Mission Control Frontend Shell",
+            package_owner="space-ops-apps",
+            runtime_kind="frontend_shell",
+            runtime_template="frontend-shell",
+            source_path="project/space-ops-apps/mission-control-ui",
+        )
+        session.add(unit)
+        session.flush()
+    unit.deployment_status = "healthy"
+    unit.health_status = "passing"
+    unit.discovery_metadata_json = discovery or {}
     deployment = _add_deployment(
         session,
         unit_id="mission-control-frontend-shell",
@@ -64,12 +66,12 @@ def test_frontend_runtime_preview_context_returns_baseline_when_no_shell(client)
     assert response.status_code == 200
     assert response.json() == {
         "is_preview": False,
-        "frontend_unit_id": None,
+        "frontend_unit_id": "mission-control-frontend-shell",
         "active_deployment_id": None,
         "branch": None,
         "commit_sha": None,
-        "deployment_status": None,
-        "health_status": None,
+        "deployment_status": "pending",
+        "health_status": "unknown",
         "baseline_branch": "main",
         "baseline_commit_sha": None,
         "preview_deployment_id": None,

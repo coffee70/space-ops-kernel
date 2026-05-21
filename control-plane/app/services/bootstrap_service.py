@@ -64,6 +64,11 @@ BOOTSTRAP_UNITS = (
     "derived-telemetry-service",
 )
 
+REGISTRY_SEED_UNITS = (
+    *BOOTSTRAP_UNITS,
+    "mission-control-frontend-shell",
+)
+
 
 @dataclass
 class RuntimeUnitBootstrapResult:
@@ -317,7 +322,7 @@ class RuntimeBootstrapper:
         with session_factory() as session:
             registry = RegistryService(session)
             for manifest_path in sorted((self.settings.main_worktree_dir / "manifests" / "units").glob("*.yaml")):
-                if manifest_path.stem not in BOOTSTRAP_UNITS:
+                if manifest_path.stem not in REGISTRY_SEED_UNITS:
                     continue
                 manifest = UnitManifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
                 registry.seed_manifest_unit(manifest)

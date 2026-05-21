@@ -119,12 +119,14 @@ def test_bootstrap_manifest_sync_creates_commit_when_seed_changes(control_plane_
 
 
 def test_runtime_bootstrapper_units_match_seed_manifest_inventory() -> None:
-    from app.services.bootstrap_service import BOOTSTRAP_UNITS
+    from app.services.bootstrap_service import BOOTSTRAP_UNITS, REGISTRY_SEED_UNITS
 
     manifest_root = Path(__file__).resolve().parents[1] / "app" / "bootstrap" / "manifests"
     manifest_unit_ids = tuple(sorted(path.stem for path in manifest_root.glob("*.yaml")))
 
-    assert tuple(sorted(BOOTSTRAP_UNITS)) == manifest_unit_ids
+    assert tuple(sorted(REGISTRY_SEED_UNITS)) == manifest_unit_ids
+    assert "mission-control-frontend-shell" in REGISTRY_SEED_UNITS
+    assert "mission-control-frontend-shell" not in BOOTSTRAP_UNITS
 
 
 def test_runtime_bootstrapper_loads_manifests_from_managed_worktree_only(tmp_path: Path, monkeypatch) -> None:

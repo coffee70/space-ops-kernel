@@ -356,6 +356,35 @@ def test_platform_node_service_deployment_uses_nested_source_root(control_plane_
     assert service["command"] == "node dist/server.js"
 
 
+def test_mission_control_frontend_shell_manifest_uses_standalone_server_command(control_plane_env: Path) -> None:
+    import yaml
+
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-apps" / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    manifest_root = Path(__file__).resolve().parents[1]
+    manifest = UnitManifest.model_validate(
+        yaml.safe_load((manifest_root / "app/bootstrap/manifests/mission-control-frontend-shell.yaml").read_text(encoding="utf-8"))
+    )
+
+    payload = DeploymentService(get_settings(), object(), object())._build_compose_payload(
+        manifest=manifest,
+        source_root=source_root,
+        service_name="mission-control-frontend-shell-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    service = next(iter(payload["services"].values()))
+
+    assert manifest.runtime_kind == "frontend_shell"
+    assert service["build"]["context"].endswith("/project/space-ops-apps/mission-control-ui")
+    assert service["build"]["dockerfile"] == "Dockerfile"
+    assert service["command"] == "node server.js"
+    assert service["environment"]["PORT"] == "3000"
+
+
 def test_compose_mounts_platform_vehicle_configurations(
     control_plane_env: Path,
 ) -> None:
