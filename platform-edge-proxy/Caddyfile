@@ -50,6 +50,7 @@
 
 	# Mission Control UI (App Router + static + remaining paths)
 	handle {
-		reverse_proxy mission-control-ui:3000
+		rewrite * /frontend-shell{uri}
+		reverse_proxy control-plane:8100
 	}
 }

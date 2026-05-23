@@ -68,6 +68,7 @@ def test_frontend_runtime_preview_context_returns_baseline_when_no_shell(client)
         "is_preview": False,
         "frontend_unit_id": "mission-control-frontend-shell",
         "active_deployment_id": None,
+        "runtime_service_name": None,
         "branch": None,
         "commit_sha": None,
         "deployment_status": "pending",
@@ -130,6 +131,7 @@ def test_frontend_runtime_preview_context_shows_non_main_shell_preview(client) -
     assert payload["is_preview"] is True
     assert payload["frontend_unit_id"] == "mission-control-frontend-shell"
     assert payload["active_deployment_id"] == "dep_shell_preview"
+    assert payload["runtime_service_name"] == "mission-control-frontend-shell-dep_shell_preview"
     assert payload["preview_deployment_id"] == "dep_shell_preview"
     assert payload["branch"] == "preview/shell-banner"
     assert payload["commit_sha"] == "preview123456"

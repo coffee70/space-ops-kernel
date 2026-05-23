@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/registry", tags=["registry"])
 proxy_router = APIRouter(prefix="/runtime-applications", tags=["runtime-applications"])
 internal_proxy_router = APIRouter(prefix="/internal/runtime-services", tags=["internal-runtime-services"])
+frontend_shell_proxy_router = APIRouter(prefix="/frontend-shell", tags=["frontend-shell"])
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -326,6 +327,13 @@ def get_service(service_slug: str, session: Session = Depends(get_db)) -> Regist
     return _serialize_service(unit, registry=registry)
 
 
+def _get_active_frontend_shell_unit(registry: RegistryService) -> ManagedUnit:
+    unit = registry.get_active_frontend_shell_unit()
+    if unit is None:
+        raise HTTPException(status_code=502, detail="frontend shell unit not found")
+    return unit
+
+
 def _get_runtime_ref_for_application(registry: RegistryService, application_id: str) -> RuntimeRef:
     application = registry.get_application(application_id)
     if application is None:
@@ -535,4 +543,39 @@ async def proxy_runtime_service(
         strip_sensitive_headers=True,
         proxy_target_label=f"service:{service_slug}",
         read_timeout_seconds=read_override,
+    )
+
+
+@frontend_shell_proxy_router.api_route(
+    "/",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+)
+@frontend_shell_proxy_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+)
+async def proxy_frontend_shell(
+    request: Request,
+    path: str = "",
+    session: Session = Depends(get_db),
+) -> Response:
+    registry = RegistryService(session)
+    unit = _get_active_frontend_shell_unit(registry)
+    try:
+        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="frontend shell has invalid runtime metadata") from exc
+    if runtime_ref is None:
+        raise HTTPException(status_code=502, detail="frontend shell has no active runtime")
+    try:
+        validate_runtime_ref(get_settings(), runtime_ref)
+    except RuntimeProxyValidationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    raw_path = _extract_raw_proxy_path(request, "/frontend-shell")
+    return await _proxy_request(
+        runtime_ref,
+        request,
+        path=path,
+        raw_path=raw_path,
+        proxy_target_label=f"frontend-shell:{unit.unit_id}",
     )

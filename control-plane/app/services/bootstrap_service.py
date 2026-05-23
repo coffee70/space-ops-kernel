@@ -62,11 +62,11 @@ BOOTSTRAP_UNITS = (
     "agent-runtime-service",
     "platform-api-gateway",
     "derived-telemetry-service",
+    "mission-control-frontend-shell",
 )
 
 REGISTRY_SEED_UNITS = (
     *BOOTSTRAP_UNITS,
-    "mission-control-frontend-shell",
 )
 
 

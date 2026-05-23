@@ -342,6 +342,11 @@ class RegistryService:
             is_preview=is_preview,
             frontend_unit_id=shell_unit.unit_id,
             active_deployment_id=deployment.deployment_id if deployment is not None else shell_unit.active_deployment_id,
+            runtime_service_name=(
+                deployment.runtime_ref.get("service_name")
+                if deployment is not None and isinstance(deployment.runtime_ref, dict)
+                else None
+            ),
             branch=branch,
             commit_sha=deployment.commit_sha if deployment is not None else None,
             deployment_status=deployment.status if deployment is not None else shell_unit.deployment_status,

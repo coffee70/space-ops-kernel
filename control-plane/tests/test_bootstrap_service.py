@@ -126,7 +126,7 @@ def test_runtime_bootstrapper_units_match_seed_manifest_inventory() -> None:
 
     assert tuple(sorted(REGISTRY_SEED_UNITS)) == manifest_unit_ids
     assert "mission-control-frontend-shell" in REGISTRY_SEED_UNITS
-    assert "mission-control-frontend-shell" not in BOOTSTRAP_UNITS
+    assert "mission-control-frontend-shell" in BOOTSTRAP_UNITS
 
 
 def test_runtime_bootstrapper_loads_manifests_from_managed_worktree_only(tmp_path: Path, monkeypatch) -> None:

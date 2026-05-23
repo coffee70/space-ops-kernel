@@ -606,6 +606,7 @@ class ActiveFrontendPreviewRuntimeResponse(BaseModel):
     is_preview: bool
     frontend_unit_id: str | None = None
     active_deployment_id: str | None = None
+    runtime_service_name: str | None = None
     branch: str | None = None
     commit_sha: str | None = None
     deployment_status: str | None = None

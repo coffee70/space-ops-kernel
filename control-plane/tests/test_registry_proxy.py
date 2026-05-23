@@ -23,6 +23,7 @@ def _serialized_async_timeout(timeout: object) -> object:
 PROXY_FIXTURE_UNIT_ID = "proxy-backed-test-application"
 PROXY_FIXTURE_APP_ID = "proxy-backed-test"
 PROXY_FIXTURE_BRANCH = "feature/proxy-backed-test-application"
+FRONTEND_SHELL_UNIT_ID = "mission-control-frontend-shell"
 
 
 def _deploy_proxy_fixture(client) -> dict:
@@ -51,6 +52,13 @@ def _deploy_proxy_fixture(client) -> dict:
     deployment = client.post("/deployments", json={"unit_id": PROXY_FIXTURE_UNIT_ID, "branch": branch})
     assert deployment.status_code == 200
     runtime_ref, _ = _active_deployment_payload(PROXY_FIXTURE_UNIT_ID)
+    return runtime_ref
+
+
+def _deploy_frontend_shell_fixture(client) -> dict:
+    deployment = client.post("/deployments", json={"unit_id": FRONTEND_SHELL_UNIT_ID, "branch": "main"})
+    assert deployment.status_code == 200
+    runtime_ref, _ = _active_deployment_payload(FRONTEND_SHELL_UNIT_ID)
     return runtime_ref
 
 
@@ -114,6 +122,18 @@ def _set_active_application_runtime_ref(application_id: str, runtime_ref: dict |
         assert deployment is not None
         deployment.runtime_ref = runtime_ref
         session.add(deployment)
+        session.commit()
+
+
+def _delete_frontend_shell_unit() -> None:
+    from app.db import get_session_factory
+    from app.registry.service import RegistryService
+
+    with get_session_factory()() as session:
+        registry = RegistryService(session)
+        unit = registry.get_unit(FRONTEND_SHELL_UNIT_ID)
+        assert unit is not None
+        session.delete(unit)
         session.commit()
 
 
@@ -569,3 +589,100 @@ def test_internal_service_proxy_returns_504_fast_on_upstream_read_timeout(client
     assert response.status_code == 504
     assert response.json()["detail"] == "runtime proxy upstream timeout"
     assert elapsed_ms < 5000
+
+
+def test_frontend_shell_proxy_returns_502_when_unit_is_missing(client) -> None:
+    _delete_frontend_shell_unit()
+
+    response = client.get("/frontend-shell/")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "frontend shell unit not found"
+
+
+def test_frontend_shell_proxy_returns_502_without_active_runtime(client) -> None:
+    _set_active_runtime_ref(FRONTEND_SHELL_UNIT_ID, None, active=False)
+
+    response = client.get("/frontend-shell/")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "frontend shell has no active runtime"
+
+
+def test_frontend_shell_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    runtime_ref = _deploy_frontend_shell_fixture(client)
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"shell", headers={"content-type": "text/plain"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/frontend-shell/apps/telemetry/detail/sat-1?tab=signals")
+
+    assert proxied.status_code == 200
+    assert proxied.text == "shell"
+    assert calls == [
+        {
+            "method": "GET",
+            "url": (
+                f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
+                "/apps/telemetry/detail/sat-1?tab=signals"
+            ),
+            "headers": ANY,
+            "content": None,
+            "follow_redirects": False,
+            "timeout": EXPECTED_RUNTIME_PROXY_TIMEOUT,
+            "stream": True,
+        }
+    ]
+
+
+def test_frontend_shell_proxy_preserves_next_static_path_and_query(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    runtime_ref = _deploy_frontend_shell_fixture(client)
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"asset", headers={"content-type": "text/javascript"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/frontend-shell/_next/static/chunks/app.js?v=7")
+
+    assert proxied.status_code == 200
+    assert proxied.text == "asset"
+    assert calls[0]["url"] == (
+        f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
+        "/_next/static/chunks/app.js?v=7"
+    )
+
+
+def test_frontend_shell_proxy_strips_only_internal_mount_prefix(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    runtime_ref = _deploy_frontend_shell_fixture(client)
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"route", headers={"content-type": "text/plain"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/frontend-shell/frontend-shell/status")
+
+    assert proxied.status_code == 200
+    assert calls[0]["url"] == (
+        f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
+        "/frontend-shell/status"
+    )
+
+
+def test_frontend_shell_proxy_rejects_malformed_runtime_ref(client) -> None:
+    _deploy_frontend_shell_fixture(client)
+    _set_active_runtime_ref(FRONTEND_SHELL_UNIT_ID, {"service_name": FRONTEND_SHELL_UNIT_ID})
+
+    proxied = client.get("/frontend-shell/", follow_redirects=False)
+
+    assert proxied.status_code == 502
+    assert proxied.json()["detail"] == "frontend shell has invalid runtime metadata"
