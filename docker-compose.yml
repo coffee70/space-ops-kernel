@@ -118,37 +118,6 @@ services:
       nats:
         condition: service_healthy
 
-  mission-control-ui:
-    build:
-      context: ../space-ops-apps/mission-control-ui
-      dockerfile: Dockerfile
-      args:
-        # Empty = same-origin via edge proxy (:8080). Set in .env only for raw MC on :3000 without the proxy.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
-        NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-}
-    container_name: telemetry-mission-control-ui
-    ports:
-      - "3000:3000"
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
-      NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-}
-      API_SERVER_URL: http://platform-api:8000
-      CONTROL_PLANE_SERVER_URL: http://control-plane:8100
-    depends_on:
-      platform-api:
-        condition: service_healthy
-      control-plane:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   platform-edge-proxy:
     build:
       context: ./platform-edge-proxy
@@ -157,8 +126,6 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      mission-control-ui:
-        condition: service_started
       platform-api:
         condition: service_healthy
       control-plane:
