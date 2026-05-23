@@ -51,6 +51,11 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+PROXY_RESPONSE_STRIP_HEADERS = HOP_BY_HOP_HEADERS | {
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+}
 SENSITIVE_FORWARD_HEADERS = {
     "authorization",
     "cookie",
@@ -467,7 +472,7 @@ async def _proxy_request(
         headers={
             key: value
             for key, value in upstream_response.headers.items()
-            if key.lower() not in HOP_BY_HOP_HEADERS
+            if key.lower() not in PROXY_RESPONSE_STRIP_HEADERS
         },
         media_type=upstream_response.headers.get("content-type"),
     )

@@ -171,6 +171,19 @@ class RecordingAsyncClient:
         return None
 
 
+class FakeStreamingUpstreamResponse:
+    def __init__(self, *, status_code: int, content: bytes, headers: dict[str, str]):
+        self.status_code = status_code
+        self._content = content
+        self.headers = httpx.Headers(headers)
+
+    async def aiter_bytes(self):
+        yield self._content
+
+    async def aclose(self):
+        return None
+
+
 def test_application_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
@@ -637,6 +650,38 @@ def test_frontend_shell_proxy_uses_active_deployment_runtime_ref(client, monkeyp
             "stream": True,
         }
     ]
+
+
+def test_frontend_shell_proxy_strips_decoded_response_framing_headers(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    _deploy_frontend_shell_fixture(client)
+    calls: list[dict] = []
+    response = FakeStreamingUpstreamResponse(
+        status_code=200,
+        content=b"<!DOCTYPE html><html><body>control panel</body></html>",
+        headers={
+            "content-encoding": "gzip",
+            "content-length": "9999",
+            "transfer-encoding": "chunked",
+            "content-type": "text/html; charset=utf-8",
+            "x-runtime-id": "shell-preview",
+        },
+    )
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/frontend-shell/apps/control-panel")
+
+    assert proxied.status_code == 200
+    assert proxied.text == "<!DOCTYPE html><html><body>control panel</body></html>"
+    assert proxied.headers["content-type"] == "text/html; charset=utf-8"
+    assert proxied.headers["x-runtime-id"] == "shell-preview"
+    assert "content-encoding" not in proxied.headers
+    assert "content-length" not in proxied.headers
+    assert "transfer-encoding" not in proxied.headers
+    assert calls[0]["stream"] is True
 
 
 def test_frontend_shell_proxy_preserves_next_static_path_and_query(client, monkeypatch) -> None:
