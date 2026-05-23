@@ -383,6 +383,10 @@ def test_mission_control_frontend_shell_manifest_uses_standalone_server_command(
     assert service["build"]["dockerfile"] == "Dockerfile"
     assert service["command"] == "node server.js"
     assert service["environment"]["PORT"] == "3000"
+    assert service["environment"]["API_SERVER_URL"] == "http://telemetry-platform-edge-proxy:8080"
+    assert service["environment"]["CONTROL_PLANE_SERVER_URL"] == "http://control-plane:8100"
+    assert service["environment"]["NEXT_PUBLIC_API_URL"] == ""
+    assert service["environment"]["NEXT_PUBLIC_CONTROL_PLANE_URL"] == ""
 
 
 def test_compose_mounts_platform_vehicle_configurations(
@@ -744,6 +748,10 @@ def test_satnogs_env_only_injected_for_satnogs_adapter_service(control_plane_env
     assert adapter_env["SATNOGS_DLQ_ROOT"] == settings.platform_satnogs_dlq_root
     assert "VEHICLE_CONFIG_PATH" not in common_env
     assert "BACKEND_URL" not in common_env
+    assert "API_SERVER_URL" not in common_env
+    assert "CONTROL_PLANE_SERVER_URL" not in common_env
+    assert "NEXT_PUBLIC_API_URL" not in common_env
+    assert "NEXT_PUBLIC_CONTROL_PLANE_URL" not in common_env
     assert simulator_env["BACKEND_URL"] == settings.platform_api_base_url
     assert simulator_env["VEHICLE_CONFIG_PATH"] == "simulators/drogonsat.yaml"
     assert simulator_2_env["BACKEND_URL"] == settings.platform_api_base_url

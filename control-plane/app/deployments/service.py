@@ -300,6 +300,15 @@ class DeploymentService:
                     env["VEHICLE_CONFIG_PATH"] = "simulators/drogonsat.yaml"
                 elif manifest.unit_id == "simulator-2-service":
                     env["VEHICLE_CONFIG_PATH"] = "simulators/rhaegalsat.json"
+        if manifest.runtime_kind in {"frontend_application", "frontend_shell"}:
+            env.update(
+                {
+                    "API_SERVER_URL": self.settings.frontend_api_server_url,
+                    "CONTROL_PLANE_SERVER_URL": self.settings.frontend_control_plane_server_url,
+                    "NEXT_PUBLIC_API_URL": self.settings.frontend_next_public_api_url,
+                    "NEXT_PUBLIC_CONTROL_PLANE_URL": self.settings.frontend_next_public_control_plane_url,
+                }
+            )
         if manifest.runtime_kind == "frontend_application" and manifest.application:
             env["APPLICATION_ID"] = manifest.application.application_id
             if manifest.application.proxy_base_path:

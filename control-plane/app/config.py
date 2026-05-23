@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     platform_satnogs_live_enabled: str = "false"
     platform_satnogs_adapter_config: str = "app/adapters/satnogs/config.example.yaml"
     platform_satnogs_dlq_root: str = "/app/runtime/satnogs-adapter/dlq"
+    frontend_api_server_url: str = "http://telemetry-platform-edge-proxy:8080"
+    frontend_control_plane_server_url: str = "http://control-plane:8100"
+    frontend_next_public_api_url: str = ""
+    frontend_next_public_control_plane_url: str = ""
     workspace_root: Path = Field(default_factory=default_workspace_root)
     docker_host_workspace_root: Path | None = None
     runtime_root: Path | None = None

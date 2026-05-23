@@ -93,6 +93,10 @@ services:
       PLATFORM_SATNOGS_LIVE_ENABLED: ${SATNOGS_LIVE_ENABLED:-false}
       PLATFORM_SATNOGS_ADAPTER_CONFIG: app/adapters/satnogs/config.example.yaml
       PLATFORM_SATNOGS_DLQ_ROOT: /app/runtime/satnogs-adapter/dlq
+      FRONTEND_API_SERVER_URL: http://telemetry-platform-edge-proxy:8080
+      FRONTEND_CONTROL_PLANE_SERVER_URL: http://control-plane:8100
+      FRONTEND_NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      FRONTEND_NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-}
     volumes:
       - ../:/workspace:rw
       - ./:/app/kernel
