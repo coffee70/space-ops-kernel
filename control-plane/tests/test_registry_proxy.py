@@ -26,6 +26,19 @@ PROXY_FIXTURE_BRANCH = "feature/proxy-backed-test-application"
 FRONTEND_SHELL_UNIT_ID = "mission-control-frontend-shell"
 
 
+def _post_and_execute_deployment(client, payload: dict) -> dict:
+    from app.config import get_settings
+    from app.deployments.worker import DeploymentWorker
+
+    response = client.post("/deployments", json=payload)
+    assert response.status_code == 200
+    queued = response.json()
+    assert DeploymentWorker(get_settings()).run_once() == queued["deployment_id"]
+    status = client.get(f"/deployments/{queued['deployment_id']}")
+    assert status.status_code == 200
+    return status.json()
+
+
 def _deploy_proxy_fixture(client) -> dict:
     branch = PROXY_FIXTURE_BRANCH
     branch_response = client.post("/code/branches", json={"branch": branch, "from_branch": "main"})
@@ -49,15 +62,13 @@ def _deploy_proxy_fixture(client) -> dict:
         json={"branch": branch, "message": "Add synthetic proxy application fixture"},
     )
     assert commit_response.status_code == 200
-    deployment = client.post("/deployments", json={"unit_id": PROXY_FIXTURE_UNIT_ID, "branch": branch})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": PROXY_FIXTURE_UNIT_ID, "branch": branch})
     runtime_ref, _ = _active_deployment_payload(PROXY_FIXTURE_UNIT_ID)
     return runtime_ref
 
 
 def _deploy_frontend_shell_fixture(client) -> dict:
-    deployment = client.post("/deployments", json={"unit_id": FRONTEND_SHELL_UNIT_ID, "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": FRONTEND_SHELL_UNIT_ID, "branch": "main"})
     runtime_ref, _ = _active_deployment_payload(FRONTEND_SHELL_UNIT_ID)
     return runtime_ref
 
@@ -309,8 +320,7 @@ def test_proxy_rejects_host_service_name_mismatch(client) -> None:
 
 
 def test_registry_service_lookup_returns_safe_service_metadata(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
 
     response = client.get("/registry/services/vehicle-config-service")
 
@@ -337,8 +347,7 @@ def test_registry_service_lookup_returns_404_for_unknown_slug(client) -> None:
 
 
 def test_registry_service_lookup_does_not_require_active_runtime(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     _set_active_service_runtime_ref("vehicle-config-service", None)
 
     response = client.get("/registry/services/vehicle-config-service")
@@ -350,8 +359,7 @@ def test_registry_service_lookup_does_not_require_active_runtime(client) -> None
 def test_internal_service_proxy_uses_active_deployment_runtime_ref(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     runtime_ref, _ = _active_deployment_payload("vehicle-config-service")
     calls: list[dict] = []
     response = httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
@@ -396,8 +404,7 @@ def test_internal_service_proxy_uses_active_deployment_runtime_ref(client, monke
 def test_internal_service_proxy_rejects_unsafe_path_fragments(client, monkeypatch, path: str) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     calls: list[dict] = []
     response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
     RecordingAsyncClient.calls = calls
@@ -413,8 +420,7 @@ def test_internal_service_proxy_rejects_unsafe_path_fragments(client, monkeypatc
 def test_internal_service_proxy_strips_sensitive_headers(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     calls: list[dict] = []
     response = httpx.Response(200, content=b"ok", headers={"content-type": "text/plain"})
     RecordingAsyncClient.calls = calls
@@ -444,8 +450,7 @@ def test_internal_service_proxy_strips_sensitive_headers(client, monkeypatch) ->
 def test_internal_service_proxy_does_not_follow_redirects(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     calls: list[dict] = []
     response = httpx.Response(
         307,
@@ -464,8 +469,7 @@ def test_internal_service_proxy_does_not_follow_redirects(client, monkeypatch) -
 
 
 def test_internal_service_proxy_rejects_host_service_name_mismatch(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     runtime_ref, _ = _active_deployment_payload("vehicle-config-service")
     runtime_ref["transport"]["host"] = "unexpected-runtime"
     _set_active_service_runtime_ref("vehicle-config-service", runtime_ref)
@@ -484,8 +488,7 @@ def test_internal_service_proxy_returns_404_for_unknown_service_slug(client) -> 
 
 
 def test_internal_service_proxy_returns_503_without_runtime(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    deployment = _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
     _set_active_service_runtime_ref("vehicle-config-service", None)
 
     response = client.get("/internal/runtime-services/vehicle-config-service/health")
@@ -495,7 +498,7 @@ def test_internal_service_proxy_returns_503_without_runtime(client) -> None:
         "error_code": "runtime_service_not_ready",
         "service_slug": "vehicle-config-service",
         "message": "Runtime service is not ready: vehicle-config-service",
-        "deployment_id": deployment.json()["deployment_id"],
+        "deployment_id": deployment["deployment_id"],
         "status": "healthy",
     }
 
@@ -504,9 +507,8 @@ def test_internal_service_proxy_returns_503_for_failed_runtime(client) -> None:
     from app.db import get_session_factory
     from app.registry.service import RegistryService
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
-    deployment_id = deployment.json()["deployment_id"]
+    deployment = _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
+    deployment_id = deployment["deployment_id"]
     with get_session_factory()() as session:
         registry = RegistryService(session)
         row = registry.get_deployment(deployment_id)
@@ -573,8 +575,7 @@ class _ReadTimeoutAsyncClient(_ConnectFailAsyncClient):
 def test_internal_service_proxy_returns_502_fast_on_connect_failure(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
 
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", _ConnectFailAsyncClient)
 
@@ -590,8 +591,7 @@ def test_internal_service_proxy_returns_502_fast_on_connect_failure(client, monk
 def test_internal_service_proxy_returns_504_fast_on_upstream_read_timeout(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
-    deployment = client.post("/deployments", json={"unit_id": "vehicle-config-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
 
     monkeypatch.setattr(registry_api.httpx, "AsyncClient", _ReadTimeoutAsyncClient)
 

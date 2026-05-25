@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,8 @@ from app.schemas import (
     SeededApplicationDefinition,
     UnitManifest,
 )
+
+NON_TERMINAL_DEPLOYMENT_STATUSES = frozenset({"queued", "materializing", "building", "health_checking"})
 
 
 def utcnow() -> datetime:
@@ -78,6 +80,14 @@ class RegistryService:
         )
         self.session.flush()
 
+    def get_in_progress_deployment_for_unit(self, unit_id: str) -> Deployment | None:
+        return (
+            self.session.query(Deployment)
+            .filter(Deployment.unit_id == unit_id, Deployment.status.in_(NON_TERMINAL_DEPLOYMENT_STATUSES))
+            .order_by(Deployment.requested_at.asc(), Deployment.deployment_id.asc())
+            .first()
+        )
+
     def create_deployment(self, unit_id: str, branch: str, commit_sha: str, *, delete_eligible: bool = True) -> Deployment:
         unit = self.session.get(ManagedUnit, unit_id)
         if unit is None:
@@ -99,8 +109,8 @@ class RegistryService:
             unit_id=unit_id,
             branch=branch,
             commit_sha=commit_sha,
-            status="pending",
-            health_status="unknown",
+            status="queued",
+            health_status="pending",
             delete_eligible=delete_eligible,
         )
         self.session.add(deployment)
@@ -110,12 +120,34 @@ class RegistryService:
             branch_record.associated_unit_id = unit_id
             branch_record.associated_deployment_id = deployment.deployment_id
             branch_record.updated_at = utcnow()
-        self.record_event(deployment.deployment_id, "requested", "Deployment requested")
+        self.record_event(deployment.deployment_id, "queued", "Deployment queued")
         return deployment
+
+    def claim_next_queued_deployment(self) -> Deployment | None:
+        deployment = (
+            self.session.query(Deployment)
+            .filter(Deployment.status == "queued")
+            .order_by(Deployment.requested_at.asc(), Deployment.deployment_id.asc())
+            .with_for_update(skip_locked=True)
+            .first()
+        )
+        if deployment is None:
+            return None
+        deployment.status = "materializing"
+        deployment.build_started_at = utcnow()
+        self.record_event(deployment.deployment_id, "claimed", "Deployment claimed by worker")
+        self.session.flush()
+        return deployment
+
+    def mark_materializing(self, deployment: Deployment) -> None:
+        deployment.status = "materializing"
+        deployment.build_started_at = deployment.build_started_at or utcnow()
+        self.record_event(deployment.deployment_id, "materializing", "Materializing source")
+        self.session.flush()
 
     def mark_build_started(self, deployment: Deployment) -> None:
         deployment.status = "building"
-        deployment.build_started_at = utcnow()
+        deployment.build_started_at = deployment.build_started_at or utcnow()
         self.record_event(deployment.deployment_id, "build_started", "Build started")
         self.session.flush()
 
@@ -123,6 +155,12 @@ class RegistryService:
         deployment.build_finished_at = utcnow()
         deployment.artifact_ref = artifact_ref
         self.record_event(deployment.deployment_id, "build_finished", "Build finished", details={"artifact_ref": artifact_ref})
+        self.session.flush()
+
+    def mark_health_checking(self, deployment: Deployment) -> None:
+        deployment.status = "health_checking"
+        deployment.health_status = "pending"
+        self.record_event(deployment.deployment_id, "health_checking", "Health checks started")
         self.session.flush()
 
     def mark_failed(self, deployment: Deployment, reason: str) -> None:
@@ -141,6 +179,28 @@ class RegistryService:
                 unit.health_status = "failing"
             unit.updated_at = utcnow()
         self.session.flush()
+
+    def fail_stale_deployments(self, *, older_than_minutes: int, logs_root: Path) -> int:
+        cutoff = utcnow() - timedelta(minutes=older_than_minutes)
+        stale_deployments = (
+            self.session.query(Deployment)
+            .filter(Deployment.status.in_(NON_TERMINAL_DEPLOYMENT_STATUSES), Deployment.requested_at < cutoff)
+            .order_by(Deployment.requested_at.asc())
+            .all()
+        )
+        for deployment in stale_deployments:
+            reason = f"Deployment marked failed by worker startup cleanup after {older_than_minutes} minutes without completion."
+            self.append_log(logs_root, deployment.deployment_id, f"{reason}\n")
+            self.mark_failed(deployment, reason)
+        return len(stale_deployments)
+
+    @staticmethod
+    def append_log(logs_root: Path, deployment_id: str, content: str) -> None:
+        if not content:
+            return
+        logs_root.mkdir(parents=True, exist_ok=True)
+        with (logs_root / f"{deployment_id}.log").open("a", encoding="utf-8") as handle:
+            handle.write(content)
 
     def register_healthy_deployment(
         self,

@@ -255,7 +255,7 @@ class SystemStatusService:
             return "healthy"
         if unit is None and deployment is None and container is None:
             return "missing"
-        if deployment is not None and deployment.status in {"pending", "building"}:
+        if deployment is not None and deployment.status in {"queued", "materializing", "building", "health_checking"}:
             return "deploying"
         return "unknown"
 

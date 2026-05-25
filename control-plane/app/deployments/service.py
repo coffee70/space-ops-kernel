@@ -58,43 +58,86 @@ class DeploymentService:
         self.registry = RegistryService(session)
 
     def submit(self, request: DeploymentSubmissionRequest, *, delete_eligible: bool = True) -> DeploymentRecordResponse:
+        return self.enqueue_deployment(request, delete_eligible=delete_eligible)
+
+    def enqueue_deployment(
+        self,
+        request: DeploymentSubmissionRequest,
+        *,
+        delete_eligible: bool = True,
+    ) -> DeploymentRecordResponse:
         branch = request.branch
         commit_sha = self.repository.resolve_commit(branch, request.commit_sha)
+        in_progress = self.registry.get_in_progress_deployment_for_unit(request.unit_id)
+        if in_progress is not None:
+            return self._to_response(in_progress.deployment_id)
         deployment = self.registry.create_deployment(request.unit_id, branch, commit_sha, delete_eligible=delete_eligible)
         logs_path = self.settings.deployment_logs_root / f"{deployment.deployment_id}.log"
         logs_path.parent.mkdir(parents=True, exist_ok=True)
+        self._append_log(
+            logs_path,
+            "\n".join(
+                [
+                    "Deployment queued",
+                    f"deployment_id: {deployment.deployment_id}",
+                    f"unit_id: {deployment.unit_id}",
+                    f"branch: {deployment.branch}",
+                    f"commit_sha: {deployment.commit_sha}",
+                    "",
+                ]
+            ),
+        )
+        self.session.flush()
+        return self._to_response(deployment.deployment_id)
 
+    def execute_deployment(self, deployment_id: str) -> DeploymentRecordResponse:
+        deployment = self.registry.get_deployment(deployment_id)
+        if deployment is None:
+            raise LookupError(deployment_id)
+        if deployment.status not in {"queued", "materializing", "building", "health_checking"}:
+            return self._to_response(deployment.deployment_id)
+
+        logs_path = self.settings.deployment_logs_root / f"{deployment.deployment_id}.log"
+        logs_path.parent.mkdir(parents=True, exist_ok=True)
         workspace = self.settings.deployment_workspaces_root / deployment.deployment_id
         if workspace.exists():
             shutil.rmtree(workspace)
         workspace.mkdir(parents=True, exist_ok=True)
 
         try:
-            previous_runtime_ref = self.registry.get_runtime_ref_for_unit(request.unit_id)
+            previous_runtime_ref = self.registry.get_runtime_ref_for_unit(deployment.unit_id)
         except Exception:
             previous_runtime_ref = None
 
         try:
-            manifest = self._load_manifest(commit_sha, request.unit_id)
+            if deployment.status == "queued":
+                self.registry.mark_materializing(deployment)
+            self._append_log(logs_path, "Deployment claimed by worker\n")
+            self._append_log(logs_path, "Materializing source\n")
+            manifest = self._load_manifest(deployment.commit_sha, deployment.unit_id)
             self.registry.mark_build_started(deployment)
             source_root = workspace / "source"
-            self.repository.materialize_commit(commit_sha, source_root)
+            self.repository.materialize_commit(deployment.commit_sha, source_root)
             artifact_root = self.settings.artifacts_root / deployment.deployment_id
             artifact_root.mkdir(parents=True, exist_ok=True)
             self.registry.mark_build_finished(deployment, artifact_ref=str(artifact_root))
 
+            self._append_log(logs_path, "Generating compose fragment\n")
             runtime_ref = self._deploy_runtime(
                 deployment_id=deployment.deployment_id,
                 manifest=manifest,
                 source_root=source_root,
                 logs_path=logs_path,
             )
+            self.registry.mark_health_checking(deployment)
+            self._append_log(logs_path, "Starting health checks\n")
             self._run_health_check(runtime_ref)
             self.registry.register_healthy_deployment(
                 deployment,
                 manifest,
                 runtime_ref.model_dump(mode="json"),
             )
+            self._append_log(logs_path, "Deployment healthy\n")
 
             if previous_runtime_ref and self.settings.runtime_strategy == "docker":
                 self._teardown_runtime(previous_runtime_ref, logs_path)
@@ -171,6 +214,7 @@ class DeploymentService:
                 "--build",
                 service_name,
             ]
+            self._append_log(logs_path, "Running docker compose up -d --build\n")
             result = run_command(command, timeout=self.settings.deployment_command_timeout_seconds)
             self._append_log(logs_path, result.stdout)
             self._append_log(logs_path, result.stderr)

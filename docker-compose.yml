@@ -119,6 +119,55 @@ services:
       nats:
         condition: service_healthy
 
+  deployment-worker:
+    build:
+      context: .
+      dockerfile: control-plane/Dockerfile
+    container_name: telemetry-deployment-worker
+    command: ["python", "-m", "app.deployments.worker"]
+    environment:
+      DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/control_plane_db
+      WORKSPACE_ROOT: /workspace
+      RUNTIME_ROOT: /app/kernel/runtime
+      PLATFORM_SOURCE_ROOT: /imports/space-ops-platform
+      APPS_SOURCE_ROOT: /imports/space-ops-apps
+      COMPOSE_FILE: /app/kernel/docker-compose.yml
+      COMPOSE_PROJECT_NAME: space-ops-kernel
+      RUNTIME_STRATEGY: docker
+      PLATFORM_DATABASE_URL: postgresql://telemetry:telemetry@postgres:5432/telemetry_db
+      PLATFORM_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PLATFORM_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PLATFORM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      PLATFORM_AGENT_RUNTIME_LOG_STREAM_PARTS: ${AGENT_RUNTIME_LOG_STREAM_PARTS:-false}
+      PLATFORM_AGENT_RUNTIME_MAX_STEPS: ${PLATFORM_AGENT_RUNTIME_MAX_STEPS:-10}
+      PLATFORM_AGENT_RUNTIME_REQUEST_TIMEOUT_MS: ${PLATFORM_AGENT_RUNTIME_REQUEST_TIMEOUT_MS:-240000}
+      PLATFORM_API_BASE_URL: http://platform-api:8000
+      PLATFORM_CONTROL_PLANE_URL: http://control-plane:8100
+      PLATFORM_NATS_URL: nats://nats:4222
+      PLATFORM_VEHICLE_CONFIG_ROOT: /app/platform/backend/resources/vehicle-configurations
+      PLATFORM_PERSISTENT_VEHICLE_CONFIG_ROOT: /app/vehicle-configurations
+      PLATFORM_SATNOGS_API_TOKEN: ${SATNOGS_API_TOKEN:-}
+      PLATFORM_SATNOGS_LIVE_ENABLED: ${SATNOGS_LIVE_ENABLED:-false}
+      PLATFORM_SATNOGS_ADAPTER_CONFIG: app/adapters/satnogs/config.example.yaml
+      PLATFORM_SATNOGS_DLQ_ROOT: /app/runtime/satnogs-adapter/dlq
+      FRONTEND_API_SERVER_URL: http://telemetry-platform-edge-proxy:8080
+      FRONTEND_CONTROL_PLANE_SERVER_URL: http://control-plane:8100
+      FRONTEND_NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      FRONTEND_NEXT_PUBLIC_CONTROL_PLANE_URL: ${NEXT_PUBLIC_CONTROL_PLANE_URL:-}
+    volumes:
+      - ../:/workspace:rw
+      - ./:/app/kernel
+      - ../space-ops-platform:/imports/space-ops-platform:ro
+      - ../space-ops-apps:/imports/space-ops-apps:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      control-plane:
+        condition: service_healthy
+
   platform-edge-proxy:
     build:
       context: ./platform-edge-proxy

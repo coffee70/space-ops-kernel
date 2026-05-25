@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     deployment_command_timeout_seconds: int = 300
     deployment_health_timeout_seconds: int = 45
     deployment_health_poll_interval_seconds: float = 1.5
+    deployment_worker_poll_interval_seconds: float = 2.0
+    deployment_worker_stale_after_minutes: int = 20
     runtime_bootstrap_max_parallel_deployments: int = 3
     runtime_proxy_connect_timeout_seconds: float = 2.0
     runtime_proxy_read_timeout_seconds: float = 8.0
@@ -44,6 +46,8 @@ class Settings(BaseSettings):
     proxy_allowed_host_suffixes: tuple[str, ...] = ()
     proxy_allowed_hosts: tuple[str, ...] = ()
     database_url: str = Field(..., min_length=1)
+    database_pool_size: int = 10
+    database_max_overflow: int = 30
     platform_database_url: str = "postgresql://telemetry:telemetry@postgres:5432/telemetry_db"
     platform_openai_api_key: str = ""
     platform_anthropic_api_key: str = ""
