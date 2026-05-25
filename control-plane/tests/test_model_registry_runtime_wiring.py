@@ -27,6 +27,32 @@ def test_build_runtime_env_injects_model_registry_paths() -> None:
     assert env_mc.get("MODEL_CONFIG_PATH") == expected_path
     assert env_ar.get("MODEL_REGISTRY_BASE_URL") == f"{cp}/internal/runtime-services/model-registry-service"
     assert env_ar.get("AGENT_RUNTIME_MAX_STEPS") == settings.platform_agent_runtime_max_steps
+    assert env_ar.get("AGENT_RUNTIME_REQUEST_TIMEOUT_MS") == settings.platform_agent_runtime_request_timeout_ms
+
+
+def test_agent_runtime_env_uses_kernel_settings_and_is_agent_only() -> None:
+    from app.config import Settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    settings = Settings(
+        database_url="postgresql://u:p@localhost:5432/db",
+        workspace_root=Path("/tmp/workspace-root"),
+        platform_agent_runtime_max_steps="12",
+        platform_agent_runtime_request_timeout_ms="333000",
+    )
+    svc = DeploymentService(settings, MagicMock(), MagicMock())
+    root = Path(__file__).resolve().parents[1]
+    ar = yaml.safe_load((root / "app/bootstrap/manifests/agent-runtime-service.yaml").read_text(encoding="utf-8"))
+    mr = yaml.safe_load((root / "app/bootstrap/manifests/model-registry-service.yaml").read_text(encoding="utf-8"))
+
+    env_ar = svc._build_runtime_env(UnitManifest.model_validate(ar), "svc-agent-runtime")
+    env_mr = svc._build_runtime_env(UnitManifest.model_validate(mr), "svc-model-registry")
+
+    assert env_ar["AGENT_RUNTIME_MAX_STEPS"] == "12"
+    assert env_ar["AGENT_RUNTIME_REQUEST_TIMEOUT_MS"] == "333000"
+    assert "AGENT_RUNTIME_MAX_STEPS" not in env_mr
+    assert "AGENT_RUNTIME_REQUEST_TIMEOUT_MS" not in env_mr
 
 
 def test_build_runtime_env_injects_persistent_vehicle_config_root_for_editor() -> None:

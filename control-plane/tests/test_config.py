@@ -15,6 +15,13 @@ def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings()
 
 
+def test_agent_runtime_defaults_support_deployment_diagnostics_waits() -> None:
+    settings = Settings(database_url="postgresql://telemetry:telemetry@localhost:5432/control_plane_test")
+
+    assert settings.platform_agent_runtime_max_steps == "10"
+    assert settings.platform_agent_runtime_request_timeout_ms == "240000"
+
+
 def _runtime_ref(*, service_name: str = "internal-runtime", host: str = "internal-runtime", scheme: str = "http") -> RuntimeRef:
     return RuntimeRef(
         service_name=service_name,
