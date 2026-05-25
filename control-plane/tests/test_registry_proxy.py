@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import ANY, MagicMock
 
 EXPECTED_RUNTIME_PROXY_TIMEOUT = {"connect": 2.0, "read": 8.0, "write": 8.0}
+EXPECTED_LONG_RUNTIME_PROXY_TIMEOUT = {"connect": 2.0, "read": 300.0, "write": 300.0}
 
 
 def _serialized_async_timeout(timeout: object) -> object:
@@ -602,6 +603,88 @@ def test_internal_service_proxy_returns_504_fast_on_upstream_read_timeout(client
     assert response.status_code == 504
     assert response.json()["detail"] == "runtime proxy upstream timeout"
     assert elapsed_ms < 5000
+
+
+@pytest.mark.parametrize(
+    ("service_slug", "path"),
+    [
+        ("agent-runtime-service", "chat"),
+        ("tool-execution-service", "execute"),
+    ],
+)
+def test_internal_service_proxy_uses_long_timeout_for_allowed_posts(
+    client,
+    monkeypatch,
+    service_slug: str,
+    path: str,
+) -> None:
+    from app.api import registry as registry_api
+    from app.schemas import RuntimeHealth, RuntimeProxy, RuntimeRef, RuntimeTransport
+
+    runtime_ref = RuntimeRef(
+        service_name=f"{service_slug}-preview",
+        transport=RuntimeTransport(scheme="http", host=f"{service_slug}-preview", port=8080),
+        health=RuntimeHealth(path="/health"),
+        proxy=RuntimeProxy(base_path=""),
+    )
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+    monkeypatch.setattr(registry_api, "_find_service_by_slug", lambda _units, _slug: MagicMock(unit_id=service_slug))
+    monkeypatch.setattr(registry_api, "_service_not_ready_payload", lambda _registry, _unit: None)
+    monkeypatch.setattr(registry_api, "_get_runtime_ref_for_unit", lambda _registry, _unit: runtime_ref)
+
+    proxied = client.post(f"/internal/runtime-services/{service_slug}/{path}", json={"message": "hello"})
+
+    assert proxied.status_code == 200
+    assert proxied.json() == {"ok": True}
+    assert calls == [
+        {
+            "method": "POST",
+            "url": f"http://{runtime_ref.transport.host}:{runtime_ref.transport.port}/{path}",
+            "headers": ANY,
+            "content": b'{"message":"hello"}',
+            "follow_redirects": False,
+            "timeout": EXPECTED_LONG_RUNTIME_PROXY_TIMEOUT,
+            "stream": True,
+        }
+    ]
+
+
+def test_internal_service_proxy_uses_default_timeout_for_normal_post(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    _post_and_execute_deployment(client, {"unit_id": "vehicle-config-service", "branch": "main"})
+    runtime_ref, _ = _active_deployment_payload("vehicle-config-service")
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.post(
+        "/internal/runtime-services/vehicle-config-service/vehicle-configs",
+        json={"message": "hello"},
+    )
+
+    assert proxied.status_code == 200
+    assert proxied.json() == {"ok": True}
+    assert calls == [
+        {
+            "method": "POST",
+            "url": (
+                f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
+                "/vehicle-configs"
+            ),
+            "headers": ANY,
+            "content": b'{"message":"hello"}',
+            "follow_redirects": False,
+            "timeout": EXPECTED_RUNTIME_PROXY_TIMEOUT,
+            "stream": True,
+        }
+    ]
 
 
 def test_frontend_shell_proxy_returns_502_when_unit_is_missing(client) -> None:

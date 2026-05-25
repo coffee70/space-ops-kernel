@@ -65,6 +65,10 @@ SENSITIVE_FORWARD_HEADERS = {
     "x-forwarded-email",
     "x-forwarded-access-token",
 }
+LONG_RUNNING_INTERNAL_SERVICE_POSTS = {
+    ("agent-runtime-service", "chat"),
+    ("tool-execution-service", "execute"),
+}
 
 
 def _safe_discovery_text(discovery: dict, field: str) -> str | None:
@@ -538,7 +542,10 @@ async def proxy_runtime_service(
     settings = get_settings()
     normalized_path = (path or "").strip().strip("/")
     read_override: float | None = None
-    if service_slug == "agent-runtime-service" and normalized_path == "chat" and request.method.upper() == "POST":
+    if (
+        request.method.upper() == "POST"
+        and (service_slug, normalized_path) in LONG_RUNNING_INTERNAL_SERVICE_POSTS
+    ):
         read_override = max(settings.runtime_proxy_read_timeout_seconds, 300.0)
     return await _proxy_request(
         runtime_ref,
