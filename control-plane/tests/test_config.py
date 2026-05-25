@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.schemas import RuntimeHealth, RuntimeProxy, RuntimeRef, RuntimeTransport
-from app.services.proxy_targets import RuntimeProxyValidationError, validate_runtime_ref
+from app.services.proxy_targets import RuntimeProxyValidationError, validate_runtime_path, validate_runtime_ref
 
 
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,3 +59,22 @@ def test_runtime_proxy_validation_rejects_host_service_name_mismatch() -> None:
             settings,
             _runtime_ref(service_name="internal-runtime", host="unexpected-runtime"),
         )
+
+
+def test_validate_runtime_path_allows_next_static_css_filename_with_double_dots() -> None:
+    path = "_next/static/chunks/15_0uk_ih._1..css"
+
+    assert validate_runtime_path(path) == path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../server.js",
+        "_next/static/../server.js",
+        "_next/static/%2e%2e/server.js",
+    ],
+)
+def test_validate_runtime_path_rejects_traversal_segments(path: str) -> None:
+    with pytest.raises(RuntimeProxyValidationError, match="proxy path is not allowed"):
+        validate_runtime_path(path)

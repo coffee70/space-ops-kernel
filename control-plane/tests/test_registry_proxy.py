@@ -704,6 +704,26 @@ def test_frontend_shell_proxy_preserves_next_static_path_and_query(client, monke
     )
 
 
+def test_frontend_shell_proxy_allows_next_static_css_filename_with_double_dots(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    runtime_ref = _deploy_frontend_shell_fixture(client)
+    calls: list[dict] = []
+    response = httpx.Response(200, content=b"css", headers={"content-type": "text/css"})
+    RecordingAsyncClient.calls = calls
+    RecordingAsyncClient.response = response
+    monkeypatch.setattr(registry_api.httpx, "AsyncClient", RecordingAsyncClient)
+
+    proxied = client.get("/frontend-shell/_next/static/chunks/15_0uk_ih._1..css")
+
+    assert proxied.status_code == 200
+    assert proxied.text == "css"
+    assert calls[0]["url"] == (
+        f"http://{runtime_ref['transport']['host']}:{runtime_ref['transport']['port']}"
+        "/_next/static/chunks/15_0uk_ih._1..css"
+    )
+
+
 def test_frontend_shell_proxy_strips_only_internal_mount_prefix(client, monkeypatch) -> None:
     from app.api import registry as registry_api
 
