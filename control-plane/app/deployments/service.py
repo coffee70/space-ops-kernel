@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,8 @@ PERSISTENT_VEHICLE_CONFIG_READERS = {
     "simulator-2-service",
     "satnogs-adapter-service",
 }
+
+DEPLOYMENT_COMMAND_OUTPUT_TAIL_CHARS = 64_000
 
 
 def _compose_safe_run_command(run_command: str) -> Any:
@@ -215,7 +219,12 @@ class DeploymentService:
                 service_name,
             ]
             self._append_log(logs_path, "Running docker compose up -d --build\n")
-            result = run_command(command, timeout=self.settings.deployment_command_timeout_seconds)
+            self._append_log(logs_path, f"Command: {shlex.join(command)}\n")
+            try:
+                result = run_command(command, timeout=self.settings.deployment_command_timeout_seconds)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                self._append_command_failure_logs(logs_path, command, exc)
+                raise
             self._append_log(logs_path, result.stdout)
             self._append_log(logs_path, result.stderr)
         else:
@@ -460,6 +469,45 @@ class DeploymentService:
             return
         with path.open("a", encoding="utf-8") as handle:
             handle.write(content)
+
+    @classmethod
+    def _append_command_failure_logs(
+        cls,
+        logs_path: Path,
+        command: list[str],
+        exc: subprocess.CalledProcessError | subprocess.TimeoutExpired,
+    ) -> None:
+        cls._append_log(logs_path, "\nDeployment command failed\n")
+        cls._append_log(logs_path, f"command: {shlex.join(command)}\n")
+        if isinstance(exc, subprocess.CalledProcessError):
+            cls._append_log(logs_path, f"exit_code: {exc.returncode}\n")
+        else:
+            cls._append_log(logs_path, f"timeout_seconds: {exc.timeout}\n")
+        cls._append_output_tail(logs_path, "stdout", getattr(exc, "stdout", None))
+        cls._append_output_tail(logs_path, "stderr", getattr(exc, "stderr", None))
+
+    @classmethod
+    def _append_output_tail(cls, logs_path: Path, label: str, output: str | bytes | None) -> None:
+        text = cls._coerce_output_text(output)
+        if not text:
+            return
+        truncated = len(text) > DEPLOYMENT_COMMAND_OUTPUT_TAIL_CHARS
+        tail = text[-DEPLOYMENT_COMMAND_OUTPUT_TAIL_CHARS:] if truncated else text
+        if truncated:
+            cls._append_log(logs_path, f"\n--- {label} tail (last {DEPLOYMENT_COMMAND_OUTPUT_TAIL_CHARS} chars) ---\n")
+        else:
+            cls._append_log(logs_path, f"\n--- {label} ---\n")
+        cls._append_log(logs_path, tail)
+        if not tail.endswith("\n"):
+            cls._append_log(logs_path, "\n")
+
+    @staticmethod
+    def _coerce_output_text(output: str | bytes | None) -> str:
+        if output is None:
+            return ""
+        if isinstance(output, bytes):
+            return output.decode("utf-8", errors="replace")
+        return output
 
     def _compose_command(self) -> list[str]:
         docker_compose = shutil.which("docker-compose")

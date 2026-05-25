@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -444,6 +445,61 @@ def test_platform_node_service_deployment_uses_nested_source_root(control_plane_
     assert service["build"]["context"].endswith("/project/space-ops-platform/backend/services/agent-runtime-service")
     assert service["build"]["dockerfile"] == "Dockerfile"
     assert service["command"] == "node dist/server.js"
+
+
+def test_failed_docker_compose_command_logs_captured_output(control_plane_env: Path, monkeypatch) -> None:
+    from app.config import get_settings
+    import app.deployments.service as deployment_service_module
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    settings = get_settings().model_copy(update={"runtime_strategy": "docker"})
+    settings.generated_compose_root.mkdir(parents=True, exist_ok=True)
+    settings.generated_env_root.mkdir(parents=True, exist_ok=True)
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "failed-preview" / "source"
+    (source_root / "project" / "space-ops-apps" / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    logs_path = settings.deployment_logs_root / "failed-preview.log"
+    logs_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def fake_run_command(command: list[str], *, timeout: int | None = None):
+        raise subprocess.CalledProcessError(
+            17,
+            command,
+            output="docker build output\n> next build\n",
+            stderr="Type error: Property 'missing' does not exist on type 'Props'.\n",
+        )
+
+    monkeypatch.setattr(deployment_service_module, "run_command", fake_run_command)
+    service = DeploymentService(settings, object(), object())
+    monkeypatch.setattr(service, "_compose_command", lambda: ["/usr/bin/docker-compose", "-p", "space-ops-kernel"])
+
+    with pytest.raises(subprocess.CalledProcessError):
+        service._deploy_runtime(
+            deployment_id="failed-preview",
+            manifest=UnitManifest(
+                unit_id="mission-control-frontend-shell",
+                display_name="Mission Control",
+                package_owner="space-ops-apps",
+                runtime_kind="frontend_shell",
+                runtime_template="frontend-shell",
+                source_path="project/space-ops-apps/mission-control-ui",
+                build=BuildSpec(command="npm run build"),
+                run=RunSpec(command="node server.js"),
+                health=HealthSpec(type="http", path="/health", port=3000),
+                discovery={},
+            ),
+            source_root=source_root,
+            logs_path=logs_path,
+        )
+
+    logs = logs_path.read_text(encoding="utf-8")
+    assert "Running docker compose up -d --build" in logs
+    assert "Command: /usr/bin/docker-compose -p space-ops-kernel" in logs
+    assert "Deployment command failed" in logs
+    assert "exit_code: 17" in logs
+    assert "docker build output" in logs
+    assert "> next build" in logs
+    assert "Type error: Property 'missing' does not exist on type 'Props'." in logs
 
 
 def test_mission_control_frontend_shell_manifest_uses_standalone_server_command(control_plane_env: Path) -> None:
