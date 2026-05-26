@@ -126,7 +126,7 @@ def test_runtime_bootstrapper_units_match_seed_manifest_inventory() -> None:
 
     assert tuple(sorted(REGISTRY_SEED_UNITS)) == manifest_unit_ids
     assert "mission-control-frontend-shell" in REGISTRY_SEED_UNITS
-    assert "mission-control-frontend-shell" not in BOOTSTRAP_UNITS
+    assert "mission-control-frontend-shell" in BOOTSTRAP_UNITS
 
 
 def test_runtime_bootstrapper_loads_manifests_from_managed_worktree_only(tmp_path: Path, monkeypatch) -> None:
@@ -187,15 +187,19 @@ def test_runtime_bootstrapper_continues_after_failed_unit(monkeypatch) -> None:
         def __init__(self, settings, repository, session):
             return None
 
-        def submit(self, request, *, delete_eligible):
+        def enqueue_deployment(self, request, *, delete_eligible):
             attempted.append(request.unit_id)
-            if request.unit_id == "bad-unit":
+            return SimpleNamespace(deployment_id=f"dep_{request.unit_id}", status="queued", failure_reason=None)
+
+        def execute_deployment(self, deployment_id):
+            unit_id = deployment_id.removeprefix("dep_")
+            if unit_id == "bad-unit":
                 return SimpleNamespace(
                     deployment_id="dep_bad",
                     status="failed",
                     failure_reason="synthetic failure",
                 )
-            return SimpleNamespace(deployment_id=f"dep_{request.unit_id}", status="healthy", failure_reason=None)
+            return SimpleNamespace(deployment_id=deployment_id, status="healthy", failure_reason=None)
 
     monkeypatch.setattr(bootstrap_service, "BOOTSTRAP_UNITS", ("bad-unit", "later-unit"))
     monkeypatch.setattr(bootstrap_service, "ManagedGitRepository", lambda settings: SimpleNamespace(get_head_commit=lambda branch: "abc123"))
@@ -242,15 +246,19 @@ def test_runtime_bootstrapper_failed_dependency_does_not_stop_unrelated_unit(mon
         def __init__(self, settings, repository, session):
             return None
 
-        def submit(self, request, *, delete_eligible):
+        def enqueue_deployment(self, request, *, delete_eligible):
             attempted.append(request.unit_id)
-            if request.unit_id == "bad-unit":
+            return SimpleNamespace(deployment_id=f"dep_{request.unit_id}", status="queued", failure_reason=None)
+
+        def execute_deployment(self, deployment_id):
+            unit_id = deployment_id.removeprefix("dep_")
+            if unit_id == "bad-unit":
                 return SimpleNamespace(
                     deployment_id="dep_bad",
                     status="failed",
                     failure_reason="synthetic failure",
                 )
-            return SimpleNamespace(deployment_id=f"dep_{request.unit_id}", status="healthy", failure_reason=None)
+            return SimpleNamespace(deployment_id=deployment_id, status="healthy", failure_reason=None)
 
     monkeypatch.setattr(bootstrap_service, "BOOTSTRAP_UNITS", ("bad-unit", "dependent-unit", "independent-unit"))
     monkeypatch.setattr(bootstrap_service, "ManagedGitRepository", lambda settings: SimpleNamespace(get_head_commit=lambda branch: "abc123"))

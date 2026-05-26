@@ -78,8 +78,6 @@ def _validate_runtime_path_candidate(path: str) -> None:
         raise RuntimeProxyValidationError("proxy path is not allowed")
     if lowered.startswith("//") or lowered.startswith("\\\\"):
         raise RuntimeProxyValidationError("proxy path is not allowed")
-    if ".." in path:
-        raise RuntimeProxyValidationError("proxy path is not allowed")
     if "\\" in path or "%5c" in lowered:
         raise RuntimeProxyValidationError("proxy path is not allowed")
     if "%2f" in lowered or "/" in path and "//" in path:
@@ -121,4 +119,3 @@ def validate_runtime_ref(settings: Settings, runtime_ref: RuntimeRef) -> None:
         raise RuntimeProxyValidationError("runtime health path must be absolute")
     if runtime_ref.proxy.base_path and not runtime_ref.proxy.base_path.startswith("/"):
         raise RuntimeProxyValidationError("runtime proxy base_path must be absolute")
-

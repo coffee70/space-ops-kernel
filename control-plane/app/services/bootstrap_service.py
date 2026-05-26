@@ -62,11 +62,11 @@ BOOTSTRAP_UNITS = (
     "agent-runtime-service",
     "platform-api-gateway",
     "derived-telemetry-service",
+    "mission-control-frontend-shell",
 )
 
 REGISTRY_SEED_UNITS = (
     *BOOTSTRAP_UNITS,
-    "mission-control-frontend-shell",
 )
 
 
@@ -584,10 +584,11 @@ class RuntimeBootstrapper:
                     logger.info("runtime bootstrap unit skipped: %s", unit_id)
                     return RuntimeUnitBootstrapResult(unit_id, "skipped", failure_reason="bootstrap source missing")
 
-                result = deployment_service.submit(
+                queued = deployment_service.enqueue_deployment(
                     DeploymentSubmissionRequest(unit_id=unit_id, branch="main", commit_sha=commit_sha),
                     delete_eligible=False,
                 )
+                result = deployment_service.execute_deployment(queued.deployment_id)
                 deployment_id = result.deployment_id
                 session.commit()
                 if result.status == "healthy":

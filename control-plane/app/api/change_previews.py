@@ -22,6 +22,7 @@ from app.schemas import (
     ChangePreviewDeployResponse,
     ChangePreviewRevertRequest,
     ChangePreviewRevertResponse,
+    DeploymentIntent,
     DeploymentSubmissionRequest,
 )
 
@@ -45,6 +46,7 @@ def deploy_change_preview(
                 unit_id=request.target_unit_id,
                 branch=request.branch,
                 commit_sha=request.commit_sha,
+                deployment_intent=DeploymentIntent.DEPLOY_PREVIEW,
             )
         )
     except FileNotFoundError as exc:
@@ -57,6 +59,7 @@ def deploy_change_preview(
         unit_id=record.unit_id,
         branch=record.branch,
         commit_sha=record.commit_sha,
+        deployment_intent=record.deployment_intent,
         status=record.status,
         health_status=record.health_status,
         logs_url=record.logs_url,
@@ -121,6 +124,7 @@ def revert_change_preview(
                 unit_id=request.target_unit_id,
                 branch=request.baseline_branch,
                 commit_sha=request.baseline_commit_sha,
+                deployment_intent=DeploymentIntent.REVERT_TO_BASELINE,
             )
         )
     except FileNotFoundError as exc:
@@ -133,6 +137,7 @@ def revert_change_preview(
         unit_id=record.unit_id,
         branch=record.branch,
         commit_sha=record.commit_sha,
+        deployment_intent=record.deployment_intent,
         status=record.status,
         health_status=record.health_status,
         logs_url=record.logs_url,

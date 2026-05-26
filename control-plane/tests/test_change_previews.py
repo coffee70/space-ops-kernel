@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 
+def _execute_queued_deployment(client, deployment_id: str) -> dict:
+    from app.config import get_settings
+    from app.deployments.worker import DeploymentWorker
+
+    assert DeploymentWorker(get_settings()).run_once() == deployment_id
+    response = client.get(f"/deployments/{deployment_id}")
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_change_preview_deploy_routes_through_deployment_service(client) -> None:
     response = client.post(
         "/change-previews/deploy",
@@ -16,16 +26,20 @@ def test_change_preview_deploy_routes_through_deployment_service(client) -> None
     )
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["status"] == "healthy"
-    assert payload["registered"] is True
+    assert payload["status"] == "queued"
+    assert payload["registered"] is False
     assert payload["unit_id"] == "derived-telemetry-service"
     assert payload["target_unit_id"] == "derived-telemetry-service"
     assert payload["target_application_id"] == "telemetry"
     assert payload["conversation_id"] == "conv-deploy-1"
     assert payload["agent_run_id"] == "run-deploy-1"
     assert payload["branch"] == "main"
+    assert payload["deployment_intent"] == "deploy_preview"
     assert payload["commit_sha"]
     assert payload["logs_url"].startswith("/deployments/")
+    executed = _execute_queued_deployment(client, payload["deployment_id"])
+    assert executed["status"] == "healthy"
+    assert executed["registered"] is True
 
 
 def test_change_preview_revert_submits_baseline_deployment(client) -> None:
@@ -73,6 +87,7 @@ def test_change_preview_revert_submits_baseline_deployment(client) -> None:
     preview_payload = preview_deploy.json()
     preview_deployment_id = preview_payload["deployment_id"]
     assert preview_payload["branch"] == preview_branch
+    _execute_queued_deployment(client, preview_deployment_id)
 
     revert_response = client.post(
         "/change-previews/revert",
@@ -87,8 +102,9 @@ def test_change_preview_revert_submits_baseline_deployment(client) -> None:
     )
     assert revert_response.status_code == 200, revert_response.text
     revert_payload = revert_response.json()
-    assert revert_payload["status"] == "healthy"
+    assert revert_payload["status"] == "queued"
     assert revert_payload["branch"] == "main"
+    assert revert_payload["deployment_intent"] == "revert_to_baseline"
     assert revert_payload["preview_deployment_id"] == preview_deployment_id
     assert revert_payload["target_unit_id"] == "derived-telemetry-service"
     assert revert_payload["target_application_id"] == "telemetry"
@@ -96,6 +112,8 @@ def test_change_preview_revert_submits_baseline_deployment(client) -> None:
     poll = client.get(f"/deployments/{revert_payload['deployment_id']}")
     assert poll.status_code == 200
     poll_payload = poll.json()
+    assert poll_payload["status"] == "queued"
+    poll_payload = _execute_queued_deployment(client, revert_payload["deployment_id"])
     assert poll_payload["status"] == "healthy"
     assert poll_payload["health_status"] == "passing"
 
@@ -186,7 +204,7 @@ def test_change_preview_revert_uses_baseline_commit_sha_when_provided(client) ->
     )
     assert revert_response.status_code == 200, revert_response.text
     revert_payload = revert_response.json()
-    assert revert_payload["status"] == "healthy"
+    assert revert_payload["status"] == "queued"
     # The revert deployment must record the requested baseline commit, not the
     # latest commit on the preview branch.
     assert revert_payload["commit_sha"] == baseline_commit_sha

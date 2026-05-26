@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     deployment_command_timeout_seconds: int = 300
     deployment_health_timeout_seconds: int = 45
     deployment_health_poll_interval_seconds: float = 1.5
+    deployment_worker_poll_interval_seconds: float = 2.0
+    deployment_worker_stale_after_minutes: int = 20
     runtime_bootstrap_max_parallel_deployments: int = 3
     runtime_proxy_connect_timeout_seconds: float = 2.0
     runtime_proxy_read_timeout_seconds: float = 8.0
@@ -44,12 +46,15 @@ class Settings(BaseSettings):
     proxy_allowed_host_suffixes: tuple[str, ...] = ()
     proxy_allowed_hosts: tuple[str, ...] = ()
     database_url: str = Field(..., min_length=1)
+    database_pool_size: int = 10
+    database_max_overflow: int = 30
     platform_database_url: str = "postgresql://telemetry:telemetry@postgres:5432/telemetry_db"
     platform_openai_api_key: str = ""
     platform_anthropic_api_key: str = ""
     platform_openai_base_url: str = ""
     platform_agent_runtime_log_stream_parts: str = "false"
-    platform_agent_runtime_max_steps: str = "5"
+    platform_agent_runtime_max_steps: str = "10"
+    platform_agent_runtime_request_timeout_ms: str = "240000"
     platform_api_base_url: str = "http://platform-api:8000"
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"
@@ -61,6 +66,10 @@ class Settings(BaseSettings):
     platform_satnogs_live_enabled: str = "false"
     platform_satnogs_adapter_config: str = "app/adapters/satnogs/config.example.yaml"
     platform_satnogs_dlq_root: str = "/app/runtime/satnogs-adapter/dlq"
+    frontend_api_server_url: str = "http://telemetry-platform-edge-proxy:8080"
+    frontend_control_plane_server_url: str = "http://control-plane:8100"
+    frontend_next_public_api_url: str = ""
+    frontend_next_public_control_plane_url: str = ""
     workspace_root: Path = Field(default_factory=default_workspace_root)
     docker_host_workspace_root: Path | None = None
     runtime_root: Path | None = None

@@ -52,6 +52,8 @@ def get_engine():
             settings.resolved_database_url,
             future=True,
             pool_pre_ping=True,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
         )
     return _engine
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +23,58 @@ from app.models.runtime import (
 )
 from app.schemas import (
     ActiveFrontendPreviewRuntimeResponse,
+    DeploymentIntent,
+    FrontendRuntimeDeployment,
+    FrontendRuntimeEffectiveState,
+    FrontendRuntimeStatusResponse,
     PlatformApplicationDefinition,
     RuntimeRef,
     SeededApplicationDefinition,
     UnitManifest,
 )
+
+NON_TERMINAL_DEPLOYMENT_STATUSES = frozenset({"queued", "materializing", "building", "health_checking"})
+TERMINAL_DEPLOYMENT_STATUSES = frozenset({"healthy", "failed", "replaced"})
+
+
+def compute_effective_frontend_runtime_state(
+    *,
+    active: FrontendRuntimeDeployment | None,
+    pending: FrontendRuntimeDeployment | None,
+    last_terminal: FrontendRuntimeDeployment | None,
+    baseline_branch: str = "main",
+) -> FrontendRuntimeEffectiveState:
+    """Compute frontend runtime state from control-plane deployment truth."""
+
+    if pending is not None:
+        if pending.deployment_intent == DeploymentIntent.REVERT_TO_BASELINE.value:
+            return "baseline_reverting"
+        if pending.deployment_intent == DeploymentIntent.DEPLOY_PREVIEW.value:
+            return "preview_deploying"
+        if pending.branch == baseline_branch:
+            return "baseline_reverting"
+        return "preview_deploying"
+
+    if active is not None and active.deployment_status == "healthy" and active.health_status == "passing":
+        if active.mode == "baseline":
+            return "baseline_active"
+        if (
+            active.mode == "preview"
+            and last_terminal is not None
+            and last_terminal.deployment_status == "failed"
+            and last_terminal.deployment_intent == DeploymentIntent.REVERT_TO_BASELINE.value
+        ):
+            return "baseline_revert_failed"
+        if active.mode == "preview":
+            return "preview_active"
+
+    if last_terminal is not None and last_terminal.deployment_status == "failed":
+        if last_terminal.deployment_intent == DeploymentIntent.REVERT_TO_BASELINE.value:
+            return "baseline_revert_failed"
+        if last_terminal.deployment_intent == DeploymentIntent.DEPLOY_PREVIEW.value:
+            return "preview_deploy_failed"
+
+    return "unknown"
 
 
 def utcnow() -> datetime:
@@ -78,7 +125,23 @@ class RegistryService:
         )
         self.session.flush()
 
-    def create_deployment(self, unit_id: str, branch: str, commit_sha: str, *, delete_eligible: bool = True) -> Deployment:
+    def get_in_progress_deployment_for_unit(self, unit_id: str) -> Deployment | None:
+        return (
+            self.session.query(Deployment)
+            .filter(Deployment.unit_id == unit_id, Deployment.status.in_(NON_TERMINAL_DEPLOYMENT_STATUSES))
+            .order_by(Deployment.requested_at.asc(), Deployment.deployment_id.asc())
+            .first()
+        )
+
+    def create_deployment(
+        self,
+        unit_id: str,
+        branch: str,
+        commit_sha: str,
+        *,
+        deployment_intent: DeploymentIntent | str = DeploymentIntent.NORMAL_DEPLOY,
+        delete_eligible: bool = True,
+    ) -> Deployment:
         unit = self.session.get(ManagedUnit, unit_id)
         if unit is None:
             unit = ManagedUnit(
@@ -99,8 +162,9 @@ class RegistryService:
             unit_id=unit_id,
             branch=branch,
             commit_sha=commit_sha,
-            status="pending",
-            health_status="unknown",
+            deployment_intent=str(deployment_intent.value if isinstance(deployment_intent, DeploymentIntent) else deployment_intent),
+            status="queued",
+            health_status="pending",
             delete_eligible=delete_eligible,
         )
         self.session.add(deployment)
@@ -110,12 +174,34 @@ class RegistryService:
             branch_record.associated_unit_id = unit_id
             branch_record.associated_deployment_id = deployment.deployment_id
             branch_record.updated_at = utcnow()
-        self.record_event(deployment.deployment_id, "requested", "Deployment requested")
+        self.record_event(deployment.deployment_id, "queued", "Deployment queued")
         return deployment
+
+    def claim_next_queued_deployment(self) -> Deployment | None:
+        deployment = (
+            self.session.query(Deployment)
+            .filter(Deployment.status == "queued")
+            .order_by(Deployment.requested_at.asc(), Deployment.deployment_id.asc())
+            .with_for_update(skip_locked=True)
+            .first()
+        )
+        if deployment is None:
+            return None
+        deployment.status = "materializing"
+        deployment.build_started_at = utcnow()
+        self.record_event(deployment.deployment_id, "claimed", "Deployment claimed by worker")
+        self.session.flush()
+        return deployment
+
+    def mark_materializing(self, deployment: Deployment) -> None:
+        deployment.status = "materializing"
+        deployment.build_started_at = deployment.build_started_at or utcnow()
+        self.record_event(deployment.deployment_id, "materializing", "Materializing source")
+        self.session.flush()
 
     def mark_build_started(self, deployment: Deployment) -> None:
         deployment.status = "building"
-        deployment.build_started_at = utcnow()
+        deployment.build_started_at = deployment.build_started_at or utcnow()
         self.record_event(deployment.deployment_id, "build_started", "Build started")
         self.session.flush()
 
@@ -123,6 +209,12 @@ class RegistryService:
         deployment.build_finished_at = utcnow()
         deployment.artifact_ref = artifact_ref
         self.record_event(deployment.deployment_id, "build_finished", "Build finished", details={"artifact_ref": artifact_ref})
+        self.session.flush()
+
+    def mark_health_checking(self, deployment: Deployment) -> None:
+        deployment.status = "health_checking"
+        deployment.health_status = "pending"
+        self.record_event(deployment.deployment_id, "health_checking", "Health checks started")
         self.session.flush()
 
     def mark_failed(self, deployment: Deployment, reason: str) -> None:
@@ -141,6 +233,28 @@ class RegistryService:
                 unit.health_status = "failing"
             unit.updated_at = utcnow()
         self.session.flush()
+
+    def fail_stale_deployments(self, *, older_than_minutes: int, logs_root: Path) -> int:
+        cutoff = utcnow() - timedelta(minutes=older_than_minutes)
+        stale_deployments = (
+            self.session.query(Deployment)
+            .filter(Deployment.status.in_(NON_TERMINAL_DEPLOYMENT_STATUSES), Deployment.requested_at < cutoff)
+            .order_by(Deployment.requested_at.asc())
+            .all()
+        )
+        for deployment in stale_deployments:
+            reason = f"Deployment marked failed by worker startup cleanup after {older_than_minutes} minutes without completion."
+            self.append_log(logs_root, deployment.deployment_id, f"{reason}\n")
+            self.mark_failed(deployment, reason)
+        return len(stale_deployments)
+
+    @staticmethod
+    def append_log(logs_root: Path, deployment_id: str, content: str) -> None:
+        if not content:
+            return
+        logs_root.mkdir(parents=True, exist_ok=True)
+        with (logs_root / f"{deployment_id}.log").open("a", encoding="utf-8") as handle:
+            handle.write(content)
 
     def register_healthy_deployment(
         self,
@@ -292,6 +406,14 @@ class RegistryService:
             .first()
         )
 
+    def get_latest_terminal_deployment_for_unit(self, unit_id: str) -> Deployment | None:
+        return (
+            self.session.query(Deployment)
+            .filter(Deployment.unit_id == unit_id, Deployment.status.in_(TERMINAL_DEPLOYMENT_STATUSES))
+            .order_by(Deployment.requested_at.desc(), Deployment.deployment_id.desc())
+            .first()
+        )
+
     def get_active_deployment_for_unit(self, unit_id: str) -> Deployment | None:
         unit = self.get_unit(unit_id)
         if unit is None or not unit.active_deployment_id:
@@ -342,6 +464,11 @@ class RegistryService:
             is_preview=is_preview,
             frontend_unit_id=shell_unit.unit_id,
             active_deployment_id=deployment.deployment_id if deployment is not None else shell_unit.active_deployment_id,
+            runtime_service_name=(
+                deployment.runtime_ref.get("service_name")
+                if deployment is not None and isinstance(deployment.runtime_ref, dict)
+                else None
+            ),
             branch=branch,
             commit_sha=deployment.commit_sha if deployment is not None else None,
             deployment_status=deployment.status if deployment is not None else shell_unit.deployment_status,
@@ -350,6 +477,102 @@ class RegistryService:
             baseline_commit_sha=branch_record.base_commit_sha if branch_record is not None else None,
             preview_deployment_id=deployment.deployment_id if is_preview and deployment is not None else None,
             target_application_id=target_application_id,
+        )
+
+    def serialize_frontend_runtime_status(
+        self,
+        *,
+        baseline_branch: str = "main",
+    ) -> FrontendRuntimeStatusResponse:
+        shell_unit = self.get_active_frontend_shell_unit()
+        if shell_unit is None:
+            return FrontendRuntimeStatusResponse(
+                frontend_unit_id=None,
+                target_application_id=None,
+                baseline_branch=baseline_branch,
+                effective_state="unknown",
+            )
+
+        active_deployment = self.get_active_deployment_for_unit(shell_unit.unit_id)
+        if active_deployment is None and shell_unit.active_deployment_id:
+            active_deployment = self.get_deployment(shell_unit.active_deployment_id)
+        pending_deployment = self.get_in_progress_deployment_for_unit(shell_unit.unit_id)
+        last_terminal_deployment = self.get_latest_terminal_deployment_for_unit(shell_unit.unit_id)
+
+        baseline_commit_sha = self._baseline_commit_sha_for_runtime(
+            baseline_branch=baseline_branch,
+            deployments=[pending_deployment, active_deployment, last_terminal_deployment],
+        )
+        discovery = shell_unit.discovery_metadata_json if isinstance(shell_unit.discovery_metadata_json, dict) else {}
+        target_application_id = discovery.get("target_application_id")
+        if not isinstance(target_application_id, str):
+            target_application_id = None
+
+        active = self._serialize_frontend_runtime_deployment(active_deployment, baseline_branch=baseline_branch)
+        pending = self._serialize_frontend_runtime_deployment(pending_deployment, baseline_branch=baseline_branch)
+        last_terminal = self._serialize_frontend_runtime_deployment(last_terminal_deployment, baseline_branch=baseline_branch)
+        effective_state = compute_effective_frontend_runtime_state(
+            active=active,
+            pending=pending,
+            last_terminal=last_terminal,
+            baseline_branch=baseline_branch,
+        )
+        return FrontendRuntimeStatusResponse(
+            frontend_unit_id=shell_unit.unit_id,
+            target_application_id=target_application_id,
+            baseline_branch=baseline_branch,
+            baseline_commit_sha=baseline_commit_sha,
+            active=active,
+            pending=pending,
+            last_terminal=last_terminal,
+            effective_state=effective_state,
+        )
+
+    def _baseline_commit_sha_for_runtime(
+        self,
+        *,
+        baseline_branch: str,
+        deployments: list[Deployment | None],
+    ) -> str | None:
+        for deployment in deployments:
+            if deployment is None or not deployment.branch:
+                continue
+            branch_record = self.session.query(ManagedBranch).filter(ManagedBranch.branch_name == deployment.branch).one_or_none()
+            if branch_record is not None and branch_record.base_commit_sha:
+                return branch_record.base_commit_sha
+        baseline_record = self.session.query(ManagedBranch).filter(ManagedBranch.branch_name == baseline_branch).one_or_none()
+        return baseline_record.base_commit_sha if baseline_record is not None else None
+
+    @staticmethod
+    def _runtime_mode(branch: str | None, *, baseline_branch: str) -> str:
+        if not branch:
+            return "unknown"
+        return "baseline" if branch == baseline_branch else "preview"
+
+    def _serialize_frontend_runtime_deployment(
+        self,
+        deployment: Deployment | None,
+        *,
+        baseline_branch: str,
+    ) -> FrontendRuntimeDeployment | None:
+        if deployment is None:
+            return None
+        mode = self._runtime_mode(deployment.branch, baseline_branch=baseline_branch)
+        return FrontendRuntimeDeployment(
+            deployment_id=deployment.deployment_id,
+            runtime_service_name=(
+                deployment.runtime_ref.get("service_name")
+                if isinstance(deployment.runtime_ref, dict)
+                else None
+            ),
+            branch=deployment.branch,
+            commit_sha=deployment.commit_sha,
+            deployment_status=deployment.status,
+            health_status=deployment.health_status,
+            deployment_intent=deployment.deployment_intent or DeploymentIntent.NORMAL_DEPLOY.value,
+            mode=mode,
+            is_preview=mode == "preview",
+            failure_reason=deployment.failure_reason,
         )
 
     def get_runtime_ref_for_unit(self, unit_id: str) -> RuntimeRef | None:

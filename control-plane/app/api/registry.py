@@ -19,6 +19,7 @@ from app.registry.service import RegistryService
 from app.schemas import (
     APPLICATION_ID_PATTERN,
     ActiveFrontendPreviewRuntimeResponse,
+    FrontendRuntimeStatusResponse,
     PlatformApplicationDefinition,
     RegistryServiceResponse,
     RegistryUnitSummaryResponse,
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/registry", tags=["registry"])
 proxy_router = APIRouter(prefix="/runtime-applications", tags=["runtime-applications"])
 internal_proxy_router = APIRouter(prefix="/internal/runtime-services", tags=["internal-runtime-services"])
+frontend_shell_proxy_router = APIRouter(prefix="/frontend-shell", tags=["frontend-shell"])
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -50,6 +52,11 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+PROXY_RESPONSE_STRIP_HEADERS = HOP_BY_HOP_HEADERS | {
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+}
 SENSITIVE_FORWARD_HEADERS = {
     "authorization",
     "cookie",
@@ -58,6 +65,10 @@ SENSITIVE_FORWARD_HEADERS = {
     "x-forwarded-user",
     "x-forwarded-email",
     "x-forwarded-access-token",
+}
+LONG_RUNNING_INTERNAL_SERVICE_POSTS = {
+    ("agent-runtime-service", "chat"),
+    ("tool-execution-service", "execute"),
 }
 
 
@@ -228,6 +239,14 @@ def get_frontend_runtime_preview_context(
     return registry.serialize_active_frontend_preview_runtime()
 
 
+@router.get("/frontend-runtime/status", response_model=FrontendRuntimeStatusResponse)
+def get_frontend_runtime_status(
+    session: Session = Depends(get_db),
+) -> FrontendRuntimeStatusResponse:
+    registry = RegistryService(session)
+    return registry.serialize_frontend_runtime_status()
+
+
 @router.get("/services", response_model=list[RegistryServiceResponse])
 def get_services(
     session: Session = Depends(get_db),
@@ -324,6 +343,13 @@ def get_service(service_slug: str, session: Session = Depends(get_db)) -> Regist
     if unit is None:
         raise HTTPException(status_code=404, detail="service not found")
     return _serialize_service(unit, registry=registry)
+
+
+def _get_active_frontend_shell_unit(registry: RegistryService) -> ManagedUnit:
+    unit = registry.get_active_frontend_shell_unit()
+    if unit is None:
+        raise HTTPException(status_code=502, detail="frontend shell unit not found")
+    return unit
 
 
 def _get_runtime_ref_for_application(registry: RegistryService, application_id: str) -> RuntimeRef:
@@ -459,7 +485,7 @@ async def _proxy_request(
         headers={
             key: value
             for key, value in upstream_response.headers.items()
-            if key.lower() not in HOP_BY_HOP_HEADERS
+            if key.lower() not in PROXY_RESPONSE_STRIP_HEADERS
         },
         media_type=upstream_response.headers.get("content-type"),
     )
@@ -525,7 +551,10 @@ async def proxy_runtime_service(
     settings = get_settings()
     normalized_path = (path or "").strip().strip("/")
     read_override: float | None = None
-    if service_slug == "agent-runtime-service" and normalized_path == "chat" and request.method.upper() == "POST":
+    if (
+        request.method.upper() == "POST"
+        and (service_slug, normalized_path) in LONG_RUNNING_INTERNAL_SERVICE_POSTS
+    ):
         read_override = max(settings.runtime_proxy_read_timeout_seconds, 300.0)
     return await _proxy_request(
         runtime_ref,
@@ -535,4 +564,39 @@ async def proxy_runtime_service(
         strip_sensitive_headers=True,
         proxy_target_label=f"service:{service_slug}",
         read_timeout_seconds=read_override,
+    )
+
+
+@frontend_shell_proxy_router.api_route(
+    "/",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+)
+@frontend_shell_proxy_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+)
+async def proxy_frontend_shell(
+    request: Request,
+    path: str = "",
+    session: Session = Depends(get_db),
+) -> Response:
+    registry = RegistryService(session)
+    unit = _get_active_frontend_shell_unit(registry)
+    try:
+        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="frontend shell has invalid runtime metadata") from exc
+    if runtime_ref is None:
+        raise HTTPException(status_code=502, detail="frontend shell has no active runtime")
+    try:
+        validate_runtime_ref(get_settings(), runtime_ref)
+    except RuntimeProxyValidationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    raw_path = _extract_raw_proxy_path(request, "/frontend-shell")
+    return await _proxy_request(
+        runtime_ref,
+        request,
+        path=path,
+        raw_path=raw_path,
+        proxy_target_label=f"frontend-shell:{unit.unit_id}",
     )

@@ -1,8 +1,27 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
+
+
+def _execute_queued_deployment(client, deployment_id: str) -> dict:
+    from app.config import get_settings
+    from app.deployments.worker import DeploymentWorker
+
+    assert DeploymentWorker(get_settings()).run_once() == deployment_id
+    response = client.get(f"/deployments/{deployment_id}")
+    assert response.status_code == 200
+    return response.json()
+
+
+def _post_and_execute_deployment(client, payload: dict) -> dict:
+    response = client.post("/deployments", json=payload)
+    assert response.status_code == 200
+    queued = response.json()
+    assert queued["status"] == "queued"
+    return _execute_queued_deployment(client, queued["deployment_id"])
 
 
 def test_phase3_fixture_service_can_scaffold_write_commit_deploy_and_delete(client) -> None:
@@ -69,9 +88,7 @@ def test_phase3_fixture_service_can_scaffold_write_commit_deploy_and_delete(clie
     )
     assert commit_response.status_code == 200
 
-    deploy_response = client.post("/deployments", json={"unit_id": unit_id, "branch": branch})
-    assert deploy_response.status_code == 200
-    deployment_payload = deploy_response.json()
+    deployment_payload = _post_and_execute_deployment(client, {"unit_id": unit_id, "branch": branch})
     assert deployment_payload["status"] == "healthy"
     assert deployment_payload["registered"] is True
 
@@ -108,9 +125,7 @@ def test_successful_deployment_updates_registry(client) -> None:
     from app.db import get_session_factory
     from app.models.runtime import Deployment
 
-    response = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
-    assert response.status_code == 200
-    deployment_payload = response.json()
+    deployment_payload = _post_and_execute_deployment(client, {"unit_id": "derived-telemetry-service", "branch": "main"})
     assert deployment_payload["status"] == "healthy"
     assert deployment_payload["registered"] is True
 
@@ -140,10 +155,87 @@ def test_successful_deployment_updates_registry(client) -> None:
     assert "discovery_metadata_json" not in service
 
 
-def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
+def test_deployment_submission_returns_queued_with_logs_before_worker(client) -> None:
+    from app.db import get_session_factory
+    from app.models.runtime import Deployment
+
+    response = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert payload["health_status"] == "pending"
+    assert payload["registered"] is False
+    assert payload["logs_url"] == f"/deployments/{payload['deployment_id']}/logs"
+
+    logs_response = client.get(payload["logs_url"])
+    assert logs_response.status_code == 200
+    logs = logs_response.json()["logs"]
+    assert "Deployment queued" in logs
+    assert f"deployment_id: {payload['deployment_id']}" in logs
+
+    with get_session_factory()() as session:
+        deployment = session.get(Deployment, payload["deployment_id"])
+        assert deployment is not None
+        assert deployment.runtime_ref is None
+        assert deployment.build_started_at is None
+
+
+def test_duplicate_submission_returns_existing_in_progress_deployment(client) -> None:
     first = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
     assert first.status_code == 200
-    first_deployment_id = first.json()["deployment_id"]
+    first_payload = first.json()
+    assert first_payload["status"] == "queued"
+
+    second = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["deployment_id"] == first_payload["deployment_id"]
+    assert second_payload["status"] == "queued"
+
+
+def test_deployment_worker_claims_and_executes_oldest_queued_deployment(client) -> None:
+    from app.config import get_settings
+    from app.deployments.worker import DeploymentWorker
+
+    first = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"}).json()
+    second = client.post("/deployments", json={"unit_id": "model-registry-service", "branch": "main"}).json()
+
+    worker = DeploymentWorker(get_settings())
+    assert worker.run_once() == first["deployment_id"]
+
+    first_status = client.get(f"/deployments/{first['deployment_id']}").json()
+    second_status = client.get(f"/deployments/{second['deployment_id']}").json()
+    assert first_status["status"] == "healthy"
+    assert second_status["status"] == "queued"
+
+
+def test_worker_startup_cleanup_marks_stale_deployments_failed(client) -> None:
+    from datetime import timedelta
+
+    from app.config import get_settings
+    from app.db import get_session_factory
+    from app.deployments.worker import DeploymentWorker
+    from app.models.runtime import Deployment
+    from app.registry.service import utcnow
+
+    queued = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"}).json()
+    with get_session_factory()() as session:
+        deployment = session.get(Deployment, queued["deployment_id"])
+        assert deployment is not None
+        deployment.requested_at = utcnow() - timedelta(minutes=30)
+        session.commit()
+
+    assert DeploymentWorker(get_settings()).cleanup_stale_jobs() == 1
+    failed = client.get(f"/deployments/{queued['deployment_id']}").json()
+    assert failed["status"] == "failed"
+    assert "worker startup cleanup" in failed["failure_reason"]
+    logs = client.get(f"/deployments/{queued['deployment_id']}/logs").json()["logs"]
+    assert "worker startup cleanup" in logs
+
+
+def test_failed_deployment_preserves_previous_healthy_state(client) -> None:
+    first_payload = _post_and_execute_deployment(client, {"unit_id": "derived-telemetry-service", "branch": "main"})
+    first_deployment_id = first_payload["deployment_id"]
 
     create_branch = client.post("/code/branches", json={"branch": "feature/bad-manifest", "from_branch": "main"})
     assert create_branch.status_code == 200
@@ -182,10 +274,12 @@ discovery:
     )
     assert commit_response.status_code == 200
 
-    failed = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "feature/bad-manifest"})
-    assert failed.status_code == 200
-    assert failed.json()["status"] == "failed"
-    assert failed.json()["registered"] is False
+    failed_payload = _post_and_execute_deployment(
+        client,
+        {"unit_id": "derived-telemetry-service", "branch": "feature/bad-manifest"},
+    )
+    assert failed_payload["status"] == "failed"
+    assert failed_payload["registered"] is False
 
     registry = client.get("/registry/services")
     assert registry.status_code == 200
@@ -198,9 +292,8 @@ def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:
     from app.db import get_session_factory
     from app.models.runtime import Deployment, ManagedUnit
 
-    first = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
-    assert first.status_code == 200
-    first_deployment_id = first.json()["deployment_id"]
+    first_payload = _post_and_execute_deployment(client, {"unit_id": "derived-telemetry-service", "branch": "main"})
+    first_deployment_id = first_payload["deployment_id"]
 
     with get_session_factory()() as session:
         unit = session.get(ManagedUnit, "derived-telemetry-service")
@@ -219,10 +312,9 @@ def test_redeployment_ignores_legacy_previous_runtime_ref_shape(client) -> None:
         session.add(deployment)
         session.commit()
 
-    second = client.post("/deployments", json={"unit_id": "derived-telemetry-service", "branch": "main"})
-    assert second.status_code == 200
-    assert second.json()["status"] == "healthy"
-    assert second.json()["deployment_id"] != first_deployment_id
+    second_payload = _post_and_execute_deployment(client, {"unit_id": "derived-telemetry-service", "branch": "main"})
+    assert second_payload["status"] == "healthy"
+    assert second_payload["deployment_id"] != first_deployment_id
 
 
 def test_frontend_application_deployment_stores_structured_proxy_base_path(client) -> None:
@@ -251,9 +343,8 @@ def test_frontend_application_deployment_stores_structured_proxy_base_path(clien
     )
     assert commit_response.status_code == 200
 
-    response = client.post("/deployments", json={"unit_id": "proxy-backed-test-application", "branch": branch})
-    assert response.status_code == 200
-    deployment_id = response.json()["deployment_id"]
+    deployment_payload = _post_and_execute_deployment(client, {"unit_id": "proxy-backed-test-application", "branch": branch})
+    deployment_id = deployment_payload["deployment_id"]
 
     with get_session_factory()() as session:
         deployment = session.get(Deployment, deployment_id)
@@ -356,6 +447,61 @@ def test_platform_node_service_deployment_uses_nested_source_root(control_plane_
     assert service["command"] == "node dist/server.js"
 
 
+def test_failed_docker_compose_command_logs_captured_output(control_plane_env: Path, monkeypatch) -> None:
+    from app.config import get_settings
+    import app.deployments.service as deployment_service_module
+    from app.deployments.service import DeploymentService
+    from app.schemas import BuildSpec, HealthSpec, RunSpec, UnitManifest
+
+    settings = get_settings().model_copy(update={"runtime_strategy": "docker"})
+    settings.generated_compose_root.mkdir(parents=True, exist_ok=True)
+    settings.generated_env_root.mkdir(parents=True, exist_ok=True)
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "failed-preview" / "source"
+    (source_root / "project" / "space-ops-apps" / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    logs_path = settings.deployment_logs_root / "failed-preview.log"
+    logs_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def fake_run_command(command: list[str], *, timeout: int | None = None):
+        raise subprocess.CalledProcessError(
+            17,
+            command,
+            output="docker build output\n> next build\n",
+            stderr="Type error: Property 'missing' does not exist on type 'Props'.\n",
+        )
+
+    monkeypatch.setattr(deployment_service_module, "run_command", fake_run_command)
+    service = DeploymentService(settings, object(), object())
+    monkeypatch.setattr(service, "_compose_command", lambda: ["/usr/bin/docker-compose", "-p", "space-ops-kernel"])
+
+    with pytest.raises(subprocess.CalledProcessError):
+        service._deploy_runtime(
+            deployment_id="failed-preview",
+            manifest=UnitManifest(
+                unit_id="mission-control-frontend-shell",
+                display_name="Mission Control",
+                package_owner="space-ops-apps",
+                runtime_kind="frontend_shell",
+                runtime_template="frontend-shell",
+                source_path="project/space-ops-apps/mission-control-ui",
+                build=BuildSpec(command="npm run build"),
+                run=RunSpec(command="node server.js"),
+                health=HealthSpec(type="http", path="/health", port=3000),
+                discovery={},
+            ),
+            source_root=source_root,
+            logs_path=logs_path,
+        )
+
+    logs = logs_path.read_text(encoding="utf-8")
+    assert "Running docker compose up -d --build" in logs
+    assert "Command: /usr/bin/docker-compose -p space-ops-kernel" in logs
+    assert "Deployment command failed" in logs
+    assert "exit_code: 17" in logs
+    assert "docker build output" in logs
+    assert "> next build" in logs
+    assert "Type error: Property 'missing' does not exist on type 'Props'." in logs
+
+
 def test_mission_control_frontend_shell_manifest_uses_standalone_server_command(control_plane_env: Path) -> None:
     import yaml
 
@@ -383,6 +529,10 @@ def test_mission_control_frontend_shell_manifest_uses_standalone_server_command(
     assert service["build"]["dockerfile"] == "Dockerfile"
     assert service["command"] == "node server.js"
     assert service["environment"]["PORT"] == "3000"
+    assert service["environment"]["API_SERVER_URL"] == "http://telemetry-platform-edge-proxy:8080"
+    assert service["environment"]["CONTROL_PLANE_SERVER_URL"] == "http://control-plane:8100"
+    assert service["environment"]["NEXT_PUBLIC_API_URL"] == ""
+    assert service["environment"]["NEXT_PUBLIC_CONTROL_PLANE_URL"] == ""
 
 
 def test_compose_mounts_platform_vehicle_configurations(
@@ -744,6 +894,10 @@ def test_satnogs_env_only_injected_for_satnogs_adapter_service(control_plane_env
     assert adapter_env["SATNOGS_DLQ_ROOT"] == settings.platform_satnogs_dlq_root
     assert "VEHICLE_CONFIG_PATH" not in common_env
     assert "BACKEND_URL" not in common_env
+    assert "API_SERVER_URL" not in common_env
+    assert "CONTROL_PLANE_SERVER_URL" not in common_env
+    assert "NEXT_PUBLIC_API_URL" not in common_env
+    assert "NEXT_PUBLIC_CONTROL_PLANE_URL" not in common_env
     assert simulator_env["BACKEND_URL"] == settings.platform_api_base_url
     assert simulator_env["VEHICLE_CONFIG_PATH"] == "simulators/drogonsat.yaml"
     assert simulator_2_env["BACKEND_URL"] == settings.platform_api_base_url

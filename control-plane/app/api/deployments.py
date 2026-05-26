@@ -47,6 +47,7 @@ def get_deployment(
         unit_id=deployment.unit_id,
         branch=deployment.branch,
         commit_sha=deployment.commit_sha,
+        deployment_intent=deployment.deployment_intent,
         status=deployment.status,
         health_status=deployment.health_status,
         logs_url=f"/deployments/{deployment.deployment_id}/logs",

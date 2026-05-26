@@ -19,6 +19,19 @@ FORBIDDEN_PUBLIC_FIELDS = {
 }
 
 
+def _post_and_execute_deployment(client, payload: dict) -> dict:
+    from app.config import get_settings
+    from app.deployments.worker import DeploymentWorker
+
+    response = client.post("/deployments", json=payload)
+    assert response.status_code == 200
+    queued = response.json()
+    assert DeploymentWorker(get_settings()).run_once() == queued["deployment_id"]
+    status = client.get(f"/deployments/{queued['deployment_id']}")
+    assert status.status_code == 200
+    return status.json()
+
+
 def test_registry_services_returns_safe_service_catalog(client) -> None:
     response = client.get("/registry/services")
 
@@ -50,8 +63,7 @@ def test_telemetry_ingest_runtime_transport_uses_health_port_8080(client) -> Non
     from app.db import get_session_factory
     from app.registry.service import RegistryService
 
-    deployment = client.post("/deployments", json={"unit_id": "telemetry-ingest-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "telemetry-ingest-service", "branch": "main"})
 
     response = client.get("/registry/services?includeRuntimeTransport=true")
 
@@ -76,8 +88,7 @@ def test_telemetry_ingest_runtime_transport_uses_health_port_8080(client) -> Non
 
 
 def test_registry_service_response_does_not_expose_runtime_internals(client) -> None:
-    deployment = client.post("/deployments", json={"unit_id": "telemetry-ingest-service", "branch": "main"})
-    assert deployment.status_code == 200
+    _post_and_execute_deployment(client, {"unit_id": "telemetry-ingest-service", "branch": "main"})
 
     response = client.get("/registry/services/telemetry-ingest-service")
 
@@ -92,4 +103,3 @@ def test_registry_services_normalizes_capability_tags_to_capabilities(client) ->
     payload = response.json()
     assert "capabilities" in payload
     assert "ingest" in payload["capabilities"]
-

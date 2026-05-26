@@ -44,7 +44,7 @@ docker compose up -d
 
 1. **Edge proxy / normal demo (recommended):** open **`http://localhost:8080`**. Leave `NEXT_PUBLIC_API_URL` unset or empty and rebuild Mission Control after changing `.env` so the client bundle is not baked with an old absolute API host.
 
-2. **Direct frontend dev:** open **`http://localhost:3000`** and set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in `.env` so the browser can reach `platform-api` without the edge proxy.
+2. **Direct frontend dev:** run the Mission Control UI from `../space-ops-apps/mission-control-ui` and open **`http://localhost:3000`**. Set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in that app's environment so the browser can reach `platform-api` without the edge proxy.
 
 **model-registry-service** persists editable `models.local.yaml` in a Docker named volume during Compose deployments. The service seeds the file from its bundled example on first startup and never overwrites existing edits. **agent-runtime-service** consumes the model catalog over HTTP.
 
@@ -52,7 +52,6 @@ docker compose up -d
 
 **Debug / direct service ports**
 
-- Raw Mission Control UI only: `http://localhost:3000` — use **`NEXT_PUBLIC_API_URL=http://localhost:8000`** as above, or prefer **`http://localhost:8080`** for same-origin API paths.
 - Raw `platform-api`: `http://localhost:8000`
 - Raw `control-plane`: `http://localhost:8100`
 
@@ -62,7 +61,7 @@ This starts:
 - `platform-edge-proxy` on port **`8080`** (browser-facing; proxies to UI, platform API, and control plane)
 - `platform-api` on port `8000`
 - `control-plane` on port `8100`
-- `mission-control-ui` on port `3000`
+- managed `mission-control-frontend-shell` through the control-plane bootstrap manifest
 - managed `satnogs-adapter-service` through the control-plane bootstrap manifest
 - managed simulator services through the control-plane bootstrap manifests
 
@@ -125,10 +124,10 @@ Containers address each other **by Compose service names**, not `localhost`. Bri
 docker compose up -d --build
 ```
 
-For the official same-origin path, keep empty public API URL (build args can be omitted):
+For the official same-origin path, keep empty public API URL and target the full stack or the edge proxy:
 
 ```bash
-docker compose up -d --build mission-control-ui platform-edge-proxy
+docker compose up -d --build platform-edge-proxy
 ```
 
 Further nuance lives in [../space-ops-apps/tools/playwright/README.md](../space-ops-apps/tools/playwright/README.md).
@@ -152,8 +151,7 @@ docker run --rm \
 Compose builds service images from sibling repositories:
 
 - `../space-ops-platform` for `platform-api`
-- `../space-ops-apps/mission-control-ui` for `mission-control-ui`
-SatNOGS and the telemetry simulators are deployed as managed Layer 2 services from `../space-ops-platform`.
+Mission Control, SatNOGS, and the telemetry simulators are deployed as managed runtime units from sibling repositories by the control plane.
 
 The **`control-plane`** service mounts the split-checkout parent directory (`../`) at **`/workspace`** and sets **`WORKSPACE_ROOT=/workspace`**, matching the on-disk layout `workspace/space-ops-kernel`, `workspace/space-ops-platform`, etc. Managed runtime manifests can use workspace-relative bind mounts for source-owned read-only assets and Docker named volumes for service-owned persistent config.
 
@@ -164,7 +162,7 @@ Common environment values:
 - `platform-api DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/telemetry_db`
 - `control-plane DATABASE_URL=postgresql://telemetry:telemetry@postgres:5432/control_plane_db`
 - `NEXT_PUBLIC_API_URL` unset/empty for same-origin via **`platform-edge-proxy:8080`**
-- `API_SERVER_URL=http://platform-api:8000` (Next server-side rewrites removed; edge proxy routes browser-facing `/telemetry/*`, `/ops/*`, etc.)
+- managed frontend `API_SERVER_URL=http://telemetry-platform-edge-proxy:8080`
 - `CORS_ORIGIN_REGEX` allows UI and edge ports (see `docker-compose.yml`)
 - `SATNOGS_API_TOKEN` optional
 

@@ -47,6 +47,7 @@ class Deployment(Base):
     unit_id: Mapped[str] = mapped_column(ForeignKey("managed_units.unit_id"), nullable=False, index=True)
     branch: Mapped[str] = mapped_column(String(255), nullable=False)
     commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    deployment_intent: Mapped[str] = mapped_column(String(64), nullable=False, default="normal_deploy")
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending")
     health_status: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
