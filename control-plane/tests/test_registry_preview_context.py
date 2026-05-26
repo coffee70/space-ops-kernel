@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 
-def _add_deployment(session, *, unit_id: str, branch: str, deployment_id: str, commit_sha: str = "abc1234"):
+def _add_deployment(
+    session,
+    *,
+    unit_id: str,
+    branch: str,
+    deployment_id: str,
+    commit_sha: str = "abc1234",
+    status: str = "healthy",
+    health_status: str = "passing",
+    deployment_intent: str = "normal_deploy",
+    failure_reason: str | None = None,
+):
     from app.models.runtime import Deployment
 
     deployment = Deployment(
@@ -9,14 +20,20 @@ def _add_deployment(session, *, unit_id: str, branch: str, deployment_id: str, c
         unit_id=unit_id,
         branch=branch,
         commit_sha=commit_sha,
-        status="healthy",
-        health_status="passing",
-        runtime_ref={
-            "service_name": f"{unit_id}-{deployment_id}",
-            "transport": {"scheme": "http", "host": f"{unit_id}-{deployment_id}", "port": 8080},
-            "health": {"path": "/health"},
-            "proxy": {"base_path": ""},
-        },
+        status=status,
+        health_status=health_status,
+        deployment_intent=deployment_intent,
+        failure_reason=failure_reason,
+        runtime_ref=(
+            {
+                "service_name": f"{unit_id}-{deployment_id}",
+                "transport": {"scheme": "http", "host": f"{unit_id}-{deployment_id}", "port": 8080},
+                "health": {"path": "/health"},
+                "proxy": {"base_path": ""},
+            }
+            if status == "healthy"
+            else None
+        ),
     )
     session.add(deployment)
     session.flush()
@@ -177,3 +194,250 @@ def test_frontend_runtime_preview_context_ignores_backend_preview_target_applica
 
     assert response.status_code == 200
     assert response.json()["is_preview"] is False
+
+
+def test_compute_effective_frontend_runtime_state_table() -> None:
+    from app.registry.service import compute_effective_frontend_runtime_state
+    from app.schemas import FrontendRuntimeDeployment
+
+    baseline = FrontendRuntimeDeployment(
+        deployment_id="dep_base",
+        branch="main",
+        commit_sha="base",
+        deployment_status="healthy",
+        health_status="passing",
+        deployment_intent="revert_to_baseline",
+        mode="baseline",
+        is_preview=False,
+    )
+    preview = FrontendRuntimeDeployment(
+        deployment_id="dep_preview",
+        branch="preview/shell",
+        commit_sha="preview",
+        deployment_status="healthy",
+        health_status="passing",
+        deployment_intent="deploy_preview",
+        mode="preview",
+        is_preview=True,
+    )
+
+    cases = [
+        (
+            "healthy baseline",
+            None,
+            baseline,
+            None,
+            "baseline_active",
+        ),
+        (
+            "pending deploy preview over baseline",
+            FrontendRuntimeDeployment(
+                deployment_id="dep_pending",
+                branch="preview/shell",
+                commit_sha="pending",
+                deployment_status="queued",
+                health_status="pending",
+                deployment_intent="deploy_preview",
+                mode="preview",
+                is_preview=True,
+            ),
+            baseline,
+            None,
+            "preview_deploying",
+        ),
+        ("healthy preview", None, preview, preview, "preview_active"),
+        (
+            "pending revert over preview",
+            FrontendRuntimeDeployment(
+                deployment_id="dep_revert",
+                branch="main",
+                commit_sha="base",
+                deployment_status="building",
+                health_status="pending",
+                deployment_intent="revert_to_baseline",
+                mode="baseline",
+                is_preview=False,
+            ),
+            preview,
+            preview,
+            "baseline_reverting",
+        ),
+        ("back to baseline", None, baseline, baseline, "baseline_active"),
+        (
+            "failed preview deploy",
+            None,
+            None,
+            FrontendRuntimeDeployment(
+                deployment_id="dep_failed",
+                branch="preview/shell",
+                commit_sha="failed",
+                deployment_status="failed",
+                health_status="failing",
+                deployment_intent="deploy_preview",
+                mode="preview",
+                is_preview=True,
+            ),
+            "preview_deploy_failed",
+        ),
+        (
+            "failed revert while preview remains active",
+            None,
+            preview,
+            FrontendRuntimeDeployment(
+                deployment_id="dep_revert_failed",
+                branch="main",
+                commit_sha="base",
+                deployment_status="failed",
+                health_status="failing",
+                deployment_intent="revert_to_baseline",
+                mode="baseline",
+                is_preview=False,
+            ),
+            "baseline_revert_failed",
+        ),
+        ("stale preview terminal with baseline active", None, baseline, preview, "baseline_active"),
+        (
+            "stale failed deploy with baseline active",
+            None,
+            baseline,
+            FrontendRuntimeDeployment(
+                deployment_id="dep_failed",
+                branch="preview/shell",
+                commit_sha="failed",
+                deployment_status="failed",
+                health_status="failing",
+                deployment_intent="deploy_preview",
+                mode="preview",
+                is_preview=True,
+            ),
+            "baseline_active",
+        ),
+        (
+            "missing intent non-baseline",
+            FrontendRuntimeDeployment(
+                deployment_id="dep_pending",
+                branch="feature/foo",
+                commit_sha="pending",
+                deployment_status="queued",
+                health_status="pending",
+                deployment_intent="normal_deploy",
+                mode="preview",
+                is_preview=True,
+            ),
+            baseline,
+            None,
+            "preview_deploying",
+        ),
+        (
+            "missing intent baseline",
+            FrontendRuntimeDeployment(
+                deployment_id="dep_pending",
+                branch="main",
+                commit_sha="pending",
+                deployment_status="queued",
+                health_status="pending",
+                deployment_intent="normal_deploy",
+                mode="baseline",
+                is_preview=False,
+            ),
+            preview,
+            None,
+            "baseline_reverting",
+        ),
+    ]
+
+    for _name, pending, active, last_terminal, expected in cases:
+        assert (
+            compute_effective_frontend_runtime_state(
+                pending=pending,
+                active=active,
+                last_terminal=last_terminal,
+                baseline_branch="main",
+            )
+            == expected
+        )
+
+
+def test_frontend_runtime_status_returns_baseline_active_for_healthy_baseline(client) -> None:
+    from app.db import get_session_factory
+
+    with get_session_factory()() as session:
+        _add_frontend_shell(session, branch="main", deployment_id="dep_shell_main", commit_sha="main123")
+        session.commit()
+
+    response = client.get("/registry/frontend-runtime/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_state"] == "baseline_active"
+    assert payload["active"]["mode"] == "baseline"
+    assert payload["active"]["is_preview"] is False
+    assert payload["pending"] is None
+
+
+def test_frontend_runtime_status_returns_preview_deploying_when_preview_pending(client) -> None:
+    from app.db import get_session_factory
+
+    with get_session_factory()() as session:
+        unit = _add_frontend_shell(session, branch="main", deployment_id="dep_shell_main", commit_sha="main123")
+        _add_deployment(
+            session,
+            unit_id=unit.unit_id,
+            branch="preview/shell-status",
+            deployment_id="dep_shell_pending",
+            commit_sha="preview123",
+            status="queued",
+            health_status="pending",
+            deployment_intent="deploy_preview",
+        )
+        session.commit()
+
+    response = client.get("/registry/frontend-runtime/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_state"] == "preview_deploying"
+    assert payload["pending"]["deployment_id"] == "dep_shell_pending"
+    assert payload["pending"]["deployment_intent"] == "deploy_preview"
+
+
+def test_frontend_runtime_status_returns_preview_active_for_healthy_preview(client) -> None:
+    from app.db import get_session_factory
+
+    with get_session_factory()() as session:
+        _add_frontend_shell(session, branch="preview/shell-status", deployment_id="dep_shell_preview", commit_sha="preview123")
+        session.commit()
+
+    response = client.get("/registry/frontend-runtime/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_state"] == "preview_active"
+    assert payload["active"]["mode"] == "preview"
+    assert payload["active"]["is_preview"] is True
+
+
+def test_frontend_runtime_status_returns_baseline_reverting_when_revert_pending(client) -> None:
+    from app.db import get_session_factory
+
+    with get_session_factory()() as session:
+        unit = _add_frontend_shell(session, branch="preview/shell-status", deployment_id="dep_shell_preview", commit_sha="preview123")
+        _add_deployment(
+            session,
+            unit_id=unit.unit_id,
+            branch="main",
+            deployment_id="dep_shell_revert",
+            commit_sha="main123",
+            status="building",
+            health_status="pending",
+            deployment_intent="revert_to_baseline",
+        )
+        session.commit()
+
+    response = client.get("/registry/frontend-runtime/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_state"] == "baseline_reverting"
+    assert payload["pending"]["deployment_id"] == "dep_shell_revert"
+    assert payload["active"]["mode"] == "preview"

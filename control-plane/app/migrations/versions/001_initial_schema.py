@@ -42,6 +42,7 @@ def upgrade() -> None:
         sa.Column("unit_id", sa.String(length=255), sa.ForeignKey("managed_units.unit_id"), nullable=False),
         sa.Column("branch", sa.String(length=255), nullable=False),
         sa.Column("commit_sha", sa.String(length=64), nullable=False),
+        sa.Column("deployment_intent", sa.String(length=64), nullable=False, server_default="normal_deploy"),
         sa.Column("status", sa.String(length=64), nullable=False),
         sa.Column("health_status", sa.String(length=64), nullable=False),
         sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),

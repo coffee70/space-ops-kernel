@@ -34,6 +34,7 @@ def test_change_preview_deploy_routes_through_deployment_service(client) -> None
     assert payload["conversation_id"] == "conv-deploy-1"
     assert payload["agent_run_id"] == "run-deploy-1"
     assert payload["branch"] == "main"
+    assert payload["deployment_intent"] == "deploy_preview"
     assert payload["commit_sha"]
     assert payload["logs_url"].startswith("/deployments/")
     executed = _execute_queued_deployment(client, payload["deployment_id"])
@@ -103,6 +104,7 @@ def test_change_preview_revert_submits_baseline_deployment(client) -> None:
     revert_payload = revert_response.json()
     assert revert_payload["status"] == "queued"
     assert revert_payload["branch"] == "main"
+    assert revert_payload["deployment_intent"] == "revert_to_baseline"
     assert revert_payload["preview_deployment_id"] == preview_deployment_id
     assert revert_payload["target_unit_id"] == "derived-telemetry-service"
     assert revert_payload["target_application_id"] == "telemetry"

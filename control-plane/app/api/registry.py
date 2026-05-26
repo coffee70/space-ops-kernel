@@ -19,6 +19,7 @@ from app.registry.service import RegistryService
 from app.schemas import (
     APPLICATION_ID_PATTERN,
     ActiveFrontendPreviewRuntimeResponse,
+    FrontendRuntimeStatusResponse,
     PlatformApplicationDefinition,
     RegistryServiceResponse,
     RegistryUnitSummaryResponse,
@@ -236,6 +237,14 @@ def get_frontend_runtime_preview_context(
 ) -> ActiveFrontendPreviewRuntimeResponse:
     registry = RegistryService(session)
     return registry.serialize_active_frontend_preview_runtime()
+
+
+@router.get("/frontend-runtime/status", response_model=FrontendRuntimeStatusResponse)
+def get_frontend_runtime_status(
+    session: Session = Depends(get_db),
+) -> FrontendRuntimeStatusResponse:
+    registry = RegistryService(session)
+    return registry.serialize_frontend_runtime_status()
 
 
 @router.get("/services", response_model=list[RegistryServiceResponse])

@@ -75,7 +75,13 @@ class DeploymentService:
         in_progress = self.registry.get_in_progress_deployment_for_unit(request.unit_id)
         if in_progress is not None:
             return self._to_response(in_progress.deployment_id)
-        deployment = self.registry.create_deployment(request.unit_id, branch, commit_sha, delete_eligible=delete_eligible)
+        deployment = self.registry.create_deployment(
+            request.unit_id,
+            branch,
+            commit_sha,
+            deployment_intent=request.deployment_intent,
+            delete_eligible=delete_eligible,
+        )
         logs_path = self.settings.deployment_logs_root / f"{deployment.deployment_id}.log"
         logs_path.parent.mkdir(parents=True, exist_ok=True)
         self._append_log(
@@ -527,6 +533,7 @@ class DeploymentService:
             unit_id=deployment.unit_id,
             branch=deployment.branch,
             commit_sha=deployment.commit_sha,
+            deployment_intent=deployment.deployment_intent,
             status=deployment.status,
             health_status=deployment.health_status,
             logs_url=f"/deployments/{deployment.deployment_id}/logs",

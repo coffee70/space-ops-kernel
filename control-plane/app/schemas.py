@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from enum import Enum
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -134,12 +135,21 @@ class CommitCreateRequest(BaseModel):
     message: str
 
 
+class DeploymentIntent(str, Enum):
+    """User intent for a deployment request."""
+
+    DEPLOY_PREVIEW = "deploy_preview"
+    REVERT_TO_BASELINE = "revert_to_baseline"
+    NORMAL_DEPLOY = "normal_deploy"
+
+
 class DeploymentSubmissionRequest(BaseModel):
     """Deployment request."""
 
     unit_id: str
     branch: str = "main"
     commit_sha: str | None = None
+    deployment_intent: DeploymentIntent = DeploymentIntent.NORMAL_DEPLOY
 
 
 class BuildSpec(StrictBaseModel):
@@ -617,6 +627,45 @@ class ActiveFrontendPreviewRuntimeResponse(BaseModel):
     target_application_id: str | None = None
 
 
+FrontendRuntimeEffectiveState = Literal[
+    "baseline_active",
+    "preview_deploying",
+    "preview_active",
+    "baseline_reverting",
+    "preview_deploy_failed",
+    "baseline_revert_failed",
+    "unknown",
+]
+
+
+class FrontendRuntimeDeployment(BaseModel):
+    """Deployment projection for frontend runtime status."""
+
+    deployment_id: str | None = None
+    runtime_service_name: str | None = None
+    branch: str | None = None
+    commit_sha: str | None = None
+    deployment_status: str | None = None
+    health_status: str | None = None
+    deployment_intent: str = DeploymentIntent.NORMAL_DEPLOY.value
+    mode: Literal["baseline", "preview", "unknown"] = "unknown"
+    is_preview: bool = False
+    failure_reason: str | None = None
+
+
+class FrontendRuntimeStatusResponse(BaseModel):
+    """Canonical frontend shell runtime state."""
+
+    frontend_unit_id: str | None = None
+    target_application_id: str | None = None
+    baseline_branch: str = "main"
+    baseline_commit_sha: str | None = None
+    active: FrontendRuntimeDeployment | None = None
+    pending: FrontendRuntimeDeployment | None = None
+    last_terminal: FrontendRuntimeDeployment | None = None
+    effective_state: FrontendRuntimeEffectiveState = "unknown"
+
+
 class DeploymentRecordResponse(BaseModel):
     """Deployment response."""
 
@@ -624,6 +673,7 @@ class DeploymentRecordResponse(BaseModel):
     unit_id: str
     branch: str
     commit_sha: str
+    deployment_intent: str = DeploymentIntent.NORMAL_DEPLOY.value
     status: str
     health_status: str
     logs_url: str
