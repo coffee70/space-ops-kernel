@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     platform_agent_runtime_log_stream_parts: str = "false"
     platform_agent_runtime_max_steps: str = "10"
     platform_agent_runtime_request_timeout_ms: str = "240000"
+    platform_agent_runtime_title_model: str = "gpt-4.1-mini"
     platform_api_base_url: str = "http://platform-api:8000"
     platform_control_plane_url: str = "http://control-plane:8100"
     platform_nats_url: str = "nats://nats:4222"

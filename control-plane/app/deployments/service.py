@@ -345,6 +345,7 @@ class DeploymentService:
                 env["AGENT_RUNTIME_LOG_STREAM_PARTS"] = self.settings.platform_agent_runtime_log_stream_parts
                 env["AGENT_RUNTIME_MAX_STEPS"] = self.settings.platform_agent_runtime_max_steps
                 env["AGENT_RUNTIME_REQUEST_TIMEOUT_MS"] = self.settings.platform_agent_runtime_request_timeout_ms
+                env["AGENT_RUNTIME_TITLE_MODEL"] = self.settings.platform_agent_runtime_title_model
             if manifest.unit_id == "satnogs-adapter-service":
                 env.update(
                     {
