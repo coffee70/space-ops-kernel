@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -81,6 +81,22 @@ class Settings(BaseSettings):
     apps_source_root: Path | None = None
     compose_file: Path | None = None
     compose_project_name: str = "space-ops-kernel"
+
+    @field_validator(
+        "docker_host_workspace_root",
+        "runtime_root",
+        "platform_source_root",
+        "apps_source_root",
+        "compose_file",
+        mode="before",
+    )
+    @classmethod
+    def _empty_path_is_none(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @property
     def kernel_root(self) -> Path:
