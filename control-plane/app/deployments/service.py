@@ -61,6 +61,12 @@ class DeploymentService:
         self.session = session
         self.registry = RegistryService(session)
 
+    def _is_frontend_shell_development_runtime(self, manifest: UnitManifest) -> bool:
+        return (
+            manifest.runtime_kind == "frontend_shell"
+            and self.settings.frontend_shell_runtime_mode == "development"
+        )
+
     def submit(self, request: DeploymentSubmissionRequest, *, delete_eligible: bool = True) -> DeploymentRecordResponse:
         return self.enqueue_deployment(request, delete_eligible=delete_eligible)
 
@@ -195,6 +201,17 @@ class DeploymentService:
             "".join(f"{key}={value}\n" for key, value in env_values.items()),
             encoding="utf-8",
         )
+
+        if self._is_frontend_shell_development_runtime(manifest):
+            self._append_log(
+                logs_path,
+                "Frontend shell runtime mode: development - using Dockerfile.dev, npm run dev, and live source mount\n",
+            )
+        elif manifest.runtime_kind == "frontend_shell":
+            self._append_log(
+                logs_path,
+                "Frontend shell runtime mode: production - using manifest build/run settings\n",
+            )
 
         compose_payload = self._build_compose_payload(
             manifest=manifest,
@@ -369,6 +386,15 @@ class DeploymentService:
                     "NEXT_PUBLIC_CONTROL_PLANE_URL": self.settings.frontend_next_public_control_plane_url,
                 }
             )
+            if self._is_frontend_shell_development_runtime(manifest):
+                env.update(
+                    {
+                        "NODE_ENV": "development",
+                        "NEXT_TELEMETRY_DISABLED": "1",
+                        "WATCHPACK_POLLING": "true",
+                        "CHOKIDAR_USEPOLLING": "true",
+                    }
+                )
         if manifest.runtime_kind == "frontend_application" and manifest.application:
             env["APPLICATION_ID"] = manifest.application.application_id
             if manifest.application.proxy_base_path:
@@ -400,9 +426,33 @@ class DeploymentService:
             "command": _compose_safe_run_command(manifest.run.command),
             "environment": self._build_runtime_env(manifest, service_name),
         }
+        if self._is_frontend_shell_development_runtime(manifest):
+            service_spec["build"] = {
+                "context": str(self._build_context_path(manifest, source_root)),
+                "dockerfile": "Dockerfile.dev",
+            }
+            service_spec["command"] = [
+                "npm",
+                "run",
+                "dev",
+                "--",
+                "--hostname",
+                "0.0.0.0",
+                "--port",
+                str(manifest.health.port),
+            ]
+
         bind_volume_entries = self._compose_volume_entries(manifest)
         named_volume_entries, named_volume_declarations = self._compose_named_volume_entries(manifest)
-        service_volumes = [*bind_volume_entries, *named_volume_entries]
+        frontend_dev_volume_entries: list[str] = []
+        if self._is_frontend_shell_development_runtime(manifest):
+            frontend_dev_volume_entries, frontend_dev_volume_declarations = self._frontend_shell_development_volume_entries(
+                manifest,
+                service_name,
+            )
+            named_volume_declarations.update(frontend_dev_volume_declarations)
+
+        service_volumes = [*bind_volume_entries, *named_volume_entries, *frontend_dev_volume_entries]
         if service_volumes:
             service_spec["volumes"] = service_volumes
 
@@ -420,6 +470,41 @@ class DeploymentService:
             mode = "ro" if volume.read_only else "rw"
             entries.append(f"{volume.name}:{volume.target}:{mode}")
             declarations[volume.name] = {}
+        return entries, declarations
+
+    def _frontend_shell_development_volume_entries(
+        self,
+        manifest: UnitManifest,
+        service_name: str,
+    ) -> tuple[list[str], dict[str, dict[str, Any]]]:
+        """Return dev-mode volumes for the managed frontend shell."""
+
+        unit_source_path = Path(manifest.source_path)
+        try:
+            relative_apps_path = unit_source_path.relative_to("project/space-ops-apps")
+        except ValueError as exc:
+            raise ValueError(
+                "frontend_shell development runtime requires source_path under "
+                f"project/space-ops-apps, got: {manifest.source_path}"
+            ) from exc
+
+        host_source = (self.settings.resolved_apps_source_root / relative_apps_path).resolve()
+        if not host_source.is_dir():
+            raise FileNotFoundError(f"frontend shell dev source path not found: {host_source}")
+
+        compose_host_source = self._compose_visible_source_path(host_source)
+        node_modules_volume = f"{service_name}-node-modules"
+        next_cache_volume = f"{service_name}-next-cache"
+
+        entries = [
+            f"{compose_host_source}:/app:rw",
+            f"{node_modules_volume}:/app/node_modules:rw",
+            f"{next_cache_volume}:/app/.next:rw",
+        ]
+        declarations = {
+            node_modules_volume: {},
+            next_cache_volume: {},
+        }
         return entries, declarations
 
     def _compose_volume_entries(self, manifest: UnitManifest) -> list[str]:
@@ -448,6 +533,18 @@ class DeploymentService:
             mode = "ro" if mount.read_only else "rw"
             entries.append(f"{compose_host}:{mount.target}:{mode}")
         return entries
+
+    def _compose_visible_source_path(self, host_path: Path) -> str:
+        workspace_root = self.settings.workspace_root.resolve()
+        docker_host_workspace_root = self._docker_host_workspace_root(workspace_root)
+        if docker_host_workspace_root is None:
+            return str(host_path)
+
+        try:
+            host_relpath = host_path.relative_to(workspace_root)
+        except ValueError:
+            return str(host_path)
+        return str((docker_host_workspace_root / host_relpath).resolve())
 
     def _docker_host_workspace_root(self, workspace_root: Path) -> Path | None:
         """Return an explicitly configured Docker-daemon-visible workspace path."""

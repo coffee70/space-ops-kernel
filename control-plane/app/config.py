@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     frontend_control_plane_server_url: str = "http://control-plane:8100"
     frontend_next_public_api_url: str = ""
     frontend_next_public_control_plane_url: str = ""
+    # Controls how Layer 1 materializes frontend_shell runtime units.
+    # production: build artifact + production server command from manifest.
+    # development: live source mount + Next dev server command for debugging through the real 8080 stack.
+    frontend_shell_runtime_mode: Literal["production", "development"] = "production"
     workspace_root: Path = Field(default_factory=default_workspace_root)
     docker_host_workspace_root: Path | None = None
     runtime_root: Path | None = None
