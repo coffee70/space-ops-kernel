@@ -477,7 +477,13 @@ class DeploymentService:
         manifest: UnitManifest,
         service_name: str,
     ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        """Return dev-mode volumes for the managed frontend shell."""
+        """Return dev-mode volumes for the managed frontend shell.
+
+        The deployment worker runs inside a container, but generated Docker Compose
+        bind mounts are resolved by the Docker daemon host. Validate the source via
+        the deployment-worker-visible apps source root, then emit a host-visible path
+        when DOCKER_HOST_WORKSPACE_ROOT is configured.
+        """
 
         unit_source_path = Path(manifest.source_path)
         try:
@@ -488,16 +494,23 @@ class DeploymentService:
                 f"project/space-ops-apps, got: {manifest.source_path}"
             ) from exc
 
-        host_source = (self.settings.resolved_apps_source_root / relative_apps_path).resolve()
-        if not host_source.is_dir():
-            raise FileNotFoundError(f"frontend shell dev source path not found: {host_source}")
+        container_visible_source = (self.settings.resolved_apps_source_root / relative_apps_path).resolve()
+        if not container_visible_source.is_dir():
+            raise FileNotFoundError(f"frontend shell dev source path not found: {container_visible_source}")
 
-        compose_host_source = self._compose_visible_source_path(host_source)
+        if self.settings.docker_host_workspace_root is not None:
+            compose_visible_source = (
+                self.settings.docker_host_workspace_root.resolve()
+                / "space-ops-apps"
+                / relative_apps_path
+            )
+        else:
+            compose_visible_source = container_visible_source
         node_modules_volume = f"{service_name}-node-modules"
         next_cache_volume = f"{service_name}-next-cache"
 
         entries = [
-            f"{compose_host_source}:/app:rw",
+            f"{compose_visible_source}:/app:rw",
             f"{node_modules_volume}:/app/node_modules:rw",
             f"{next_cache_volume}:/app/.next:rw",
         ]
@@ -533,18 +546,6 @@ class DeploymentService:
             mode = "ro" if mount.read_only else "rw"
             entries.append(f"{compose_host}:{mount.target}:{mode}")
         return entries
-
-    def _compose_visible_source_path(self, host_path: Path) -> str:
-        workspace_root = self.settings.workspace_root.resolve()
-        docker_host_workspace_root = self._docker_host_workspace_root(workspace_root)
-        if docker_host_workspace_root is None:
-            return str(host_path)
-
-        try:
-            host_relpath = host_path.relative_to(workspace_root)
-        except ValueError:
-            return str(host_path)
-        return str((docker_host_workspace_root / host_relpath).resolve())
 
     def _docker_host_workspace_root(self, workspace_root: Path) -> Path | None:
         """Return an explicitly configured Docker-daemon-visible workspace path."""
