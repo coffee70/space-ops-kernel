@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Iterable
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+import websockets
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.websockets import WebSocket, WebSocketDisconnect
+from websockets.exceptions import ConnectionClosed
 
 from app.config import get_settings
 from app.db import get_db
@@ -352,6 +356,22 @@ def _get_active_frontend_shell_unit(registry: RegistryService) -> ManagedUnit:
     return unit
 
 
+def _get_frontend_shell_runtime_ref(session: Session) -> tuple[ManagedUnit, RuntimeRef]:
+    registry = RegistryService(session)
+    unit = _get_active_frontend_shell_unit(registry)
+    try:
+        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="frontend shell has invalid runtime metadata") from exc
+    if runtime_ref is None:
+        raise HTTPException(status_code=502, detail="frontend shell has no active runtime")
+    try:
+        validate_runtime_ref(get_settings(), runtime_ref)
+    except RuntimeProxyValidationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return unit, runtime_ref
+
+
 def _get_runtime_ref_for_application(registry: RegistryService, application_id: str) -> RuntimeRef:
     application = registry.get_application(application_id)
     if application is None:
@@ -371,7 +391,7 @@ def _get_runtime_ref_for_application(registry: RegistryService, application_id: 
     return runtime_ref
 
 
-def _extract_raw_proxy_path(request: Request, route_prefix: str) -> str:
+def _extract_raw_proxy_path(request: Request | WebSocket, route_prefix: str) -> str:
     raw_path = request.scope.get("raw_path")
     if not raw_path:
         return ""
@@ -388,6 +408,14 @@ def _upstream_for_log(url: str) -> str:
 
     parsed = urlparse(url)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path or "", "", "", ""))
+
+
+def _build_runtime_websocket_url(runtime_ref: RuntimeRef, *, path: str, query: str = "") -> str:
+    validated_path = validate_runtime_path(path)
+    websocket_path = "/" + validated_path.lstrip("/") if validated_path else "/"
+    scheme = "wss" if runtime_ref.transport.scheme == "https" else "ws"
+    netloc = f"{runtime_ref.transport.host}:{runtime_ref.transport.port}"
+    return urlunparse((scheme, netloc, websocket_path, "", query, ""))
 
 
 async def _proxy_request(
@@ -580,18 +608,7 @@ async def proxy_frontend_shell(
     path: str = "",
     session: Session = Depends(get_db),
 ) -> Response:
-    registry = RegistryService(session)
-    unit = _get_active_frontend_shell_unit(registry)
-    try:
-        runtime_ref = registry.get_runtime_ref_for_unit(unit.unit_id)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="frontend shell has invalid runtime metadata") from exc
-    if runtime_ref is None:
-        raise HTTPException(status_code=502, detail="frontend shell has no active runtime")
-    try:
-        validate_runtime_ref(get_settings(), runtime_ref)
-    except RuntimeProxyValidationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    unit, runtime_ref = _get_frontend_shell_runtime_ref(session)
     raw_path = _extract_raw_proxy_path(request, "/frontend-shell")
     return await _proxy_request(
         runtime_ref,
@@ -600,3 +617,79 @@ async def proxy_frontend_shell(
         raw_path=raw_path,
         proxy_target_label=f"frontend-shell:{unit.unit_id}",
     )
+
+
+@frontend_shell_proxy_router.websocket("/")
+@frontend_shell_proxy_router.websocket("/{path:path}")
+async def websocket_proxy_frontend_shell(
+    websocket: WebSocket,
+    path: str = "",
+    session: Session = Depends(get_db),
+) -> None:
+    settings = get_settings()
+    if settings.frontend_shell_runtime_mode != "development":
+        await websocket.close(code=1008)
+        return
+
+    try:
+        unit, runtime_ref = _get_frontend_shell_runtime_ref(session)
+        raw_path = _extract_raw_proxy_path(websocket, "/frontend-shell")
+        proxy_path = raw_path or path
+        upstream_url = _build_runtime_websocket_url(
+            runtime_ref,
+            path=proxy_path,
+            query=websocket.url.query,
+        )
+    except HTTPException:
+        await websocket.close(code=1011)
+        return
+    except RuntimeProxyValidationError:
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+
+    try:
+        async with websockets.connect(upstream_url) as upstream:
+            async def browser_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        await upstream.close()
+                        return
+                    if message.get("text") is not None:
+                        await upstream.send(message["text"])
+                    elif message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+
+            async def upstream_to_browser() -> None:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            tasks = {
+                asyncio.create_task(browser_to_upstream()),
+                asyncio.create_task(upstream_to_browser()),
+            }
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                task.result()
+    except WebSocketDisconnect:
+        return
+    except ConnectionClosed:
+        return
+    except Exception:
+        logger.exception(
+            "frontend shell websocket proxy failed target=%s path=%s",
+            unit.unit_id,
+            path,
+        )
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass

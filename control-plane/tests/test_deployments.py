@@ -533,6 +533,137 @@ def test_mission_control_frontend_shell_manifest_uses_standalone_server_command(
     assert service["environment"]["CONTROL_PLANE_SERVER_URL"] == "http://control-plane:8100"
     assert service["environment"]["NEXT_PUBLIC_API_URL"] == ""
     assert service["environment"]["NEXT_PUBLIC_CONTROL_PLANE_URL"] == ""
+    assert "NODE_ENV" not in service["environment"]
+    assert "volumes" not in service
+
+
+def test_frontend_shell_development_runtime_generates_next_dev_compose(control_plane_env: Path) -> None:
+    import yaml
+
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    settings = get_settings().model_copy(
+        update={
+            "frontend_shell_runtime_mode": "development",
+            "docker_host_workspace_root": None,
+        }
+    )
+    app_root = settings.resolved_apps_source_root / "mission-control-ui"
+    app_root.mkdir(parents=True, exist_ok=True)
+    (app_root / "package.json").write_text('{"scripts":{"dev":"next dev"}}', encoding="utf-8")
+
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-apps" / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    manifest_root = Path(__file__).resolve().parents[1]
+    manifest = UnitManifest.model_validate(
+        yaml.safe_load((manifest_root / "app/bootstrap/manifests/mission-control-frontend-shell.yaml").read_text(encoding="utf-8"))
+    )
+
+    payload = DeploymentService(settings, object(), object())._build_compose_payload(
+        manifest=manifest,
+        source_root=source_root,
+        service_name="mission-control-frontend-shell-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    service = payload["services"]["mission-control-frontend-shell-preview"]
+
+    assert service["build"]["dockerfile"] == "Dockerfile.dev"
+    assert service["command"] == [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--hostname",
+        "0.0.0.0",
+        "--port",
+        "3000",
+    ]
+    assert service["environment"]["NODE_ENV"] == "development"
+    assert service["environment"]["NEXT_TELEMETRY_DISABLED"] == "1"
+    assert service["environment"]["WATCHPACK_POLLING"] == "true"
+    assert service["environment"]["CHOKIDAR_USEPOLLING"] == "true"
+    assert f"{app_root.resolve()}:/app:rw" in service["volumes"]
+    assert "mission-control-frontend-shell-preview-node-modules:/app/node_modules:rw" in service["volumes"]
+    assert "mission-control-frontend-shell-preview-next-cache:/app/.next:rw" in service["volumes"]
+    assert payload["volumes"] == {
+        "mission-control-frontend-shell-preview-node-modules": {},
+        "mission-control-frontend-shell-preview-next-cache": {},
+    }
+
+
+def test_frontend_shell_development_runtime_uses_docker_host_workspace_root_for_bind_mount(
+    control_plane_env: Path,
+) -> None:
+    import yaml
+
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    host_workspace_root = control_plane_env / "host-space-ops"
+    settings = get_settings().model_copy(
+        update={
+            "frontend_shell_runtime_mode": "development",
+            "docker_host_workspace_root": host_workspace_root,
+        }
+    )
+    app_root = settings.resolved_apps_source_root / "mission-control-ui"
+    app_root.mkdir(parents=True, exist_ok=True)
+    (app_root / "package.json").write_text('{"scripts":{"dev":"next dev"}}', encoding="utf-8")
+
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-apps" / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    manifest_root = Path(__file__).resolve().parents[1]
+    manifest = UnitManifest.model_validate(
+        yaml.safe_load((manifest_root / "app/bootstrap/manifests/mission-control-frontend-shell.yaml").read_text(encoding="utf-8"))
+    )
+
+    payload = DeploymentService(settings, object(), object())._build_compose_payload(
+        manifest=manifest,
+        source_root=source_root,
+        service_name="mission-control-frontend-shell-preview",
+        env_path=control_plane_env / "space-ops-kernel" / "runtime" / "generated" / "env" / "preview.env",
+    )
+    service = payload["services"]["mission-control-frontend-shell-preview"]
+
+    expected_host_bind_mount = f"{host_workspace_root / 'space-ops-apps' / 'mission-control-ui'}:/app:rw"
+
+    assert expected_host_bind_mount in service["volumes"]
+    assert f"{app_root.resolve()}:/app:rw" not in service["volumes"]
+    assert "mission-control-frontend-shell-preview-node-modules:/app/node_modules:rw" in service["volumes"]
+    assert "mission-control-frontend-shell-preview-next-cache:/app/.next:rw" in service["volumes"]
+
+
+def test_frontend_shell_development_runtime_logs_selected_mode(control_plane_env: Path) -> None:
+    import yaml
+
+    from app.config import get_settings
+    from app.deployments.service import DeploymentService
+    from app.schemas import UnitManifest
+
+    settings = get_settings().model_copy(update={"frontend_shell_runtime_mode": "development"})
+    settings.ensure_runtime_dirs()
+    (settings.resolved_apps_source_root / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    source_root = control_plane_env / "space-ops-kernel" / "runtime" / "deployment-workspaces" / "preview" / "source"
+    (source_root / "project" / "space-ops-apps" / "mission-control-ui").mkdir(parents=True, exist_ok=True)
+    logs_path = settings.deployment_logs_root / "frontend-dev-preview.log"
+    manifest_root = Path(__file__).resolve().parents[1]
+    manifest = UnitManifest.model_validate(
+        yaml.safe_load((manifest_root / "app/bootstrap/manifests/mission-control-frontend-shell.yaml").read_text(encoding="utf-8"))
+    )
+
+    DeploymentService(settings, object(), object())._deploy_runtime(
+        deployment_id="frontend-dev-preview",
+        manifest=manifest,
+        source_root=source_root,
+        logs_path=logs_path,
+    )
+
+    logs = logs_path.read_text(encoding="utf-8")
+    assert "Frontend shell runtime mode: development" in logs
+    assert "Dockerfile.dev" in logs
 
 
 def test_compose_mounts_platform_vehicle_configurations(

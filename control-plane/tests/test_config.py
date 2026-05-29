@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -20,6 +22,24 @@ def test_agent_runtime_defaults_support_deployment_diagnostics_waits() -> None:
 
     assert settings.platform_agent_runtime_max_steps == "10"
     assert settings.platform_agent_runtime_request_timeout_ms == "240000"
+
+
+def test_empty_optional_path_env_values_are_treated_as_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DOCKER_HOST_WORKSPACE_ROOT", "")
+    monkeypatch.setenv("COMPOSE_FILE", "   ")
+
+    settings = Settings(database_url="postgresql://example")
+
+    assert settings.docker_host_workspace_root is None
+    assert settings.compose_file is None
+
+
+def test_non_empty_optional_path_env_values_parse_as_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DOCKER_HOST_WORKSPACE_ROOT", "/tmp/space-ops-host")
+
+    settings = Settings(database_url="postgresql://example")
+
+    assert settings.docker_host_workspace_root == Path("/tmp/space-ops-host")
 
 
 def _runtime_ref(*, service_name: str = "internal-runtime", host: str = "internal-runtime", scheme: str = "http") -> RuntimeRef:

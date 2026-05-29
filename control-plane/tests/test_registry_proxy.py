@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import ANY, MagicMock
 
 import httpx
 import pytest
-from unittest.mock import ANY, MagicMock
+from starlette.websockets import WebSocketDisconnect
 
 EXPECTED_RUNTIME_PROXY_TIMEOUT = {"connect": 2.0, "read": 8.0, "write": 8.0}
 EXPECTED_LONG_RUNTIME_PROXY_TIMEOUT = {"connect": 2.0, "read": 300.0, "write": 300.0}
@@ -733,6 +734,64 @@ def test_frontend_shell_proxy_uses_active_deployment_runtime_ref(client, monkeyp
             "stream": True,
         }
     ]
+
+
+def _runtime_ref(*, scheme: str = "http", host: str = "frontend-shell-preview"):
+    from app.schemas import RuntimeHealth, RuntimeProxy, RuntimeRef, RuntimeTransport
+
+    return RuntimeRef.model_construct(
+        service_name=host,
+        transport=RuntimeTransport.model_construct(scheme=scheme, host=host, port=3000),
+        health=RuntimeHealth(path="/health"),
+        proxy=RuntimeProxy(base_path=""),
+    )
+
+
+def test_build_runtime_websocket_url_maps_http_transport_to_ws() -> None:
+    from app.api.registry import _build_runtime_websocket_url
+
+    assert (
+        _build_runtime_websocket_url(
+            _runtime_ref(scheme="http"),
+            path="_next/webpack-hmr",
+            query="id=dev-server",
+        )
+        == "ws://frontend-shell-preview:3000/_next/webpack-hmr?id=dev-server"
+    )
+
+
+def test_build_runtime_websocket_url_maps_https_transport_to_wss() -> None:
+    from app.api.registry import _build_runtime_websocket_url
+
+    assert (
+        _build_runtime_websocket_url(
+            _runtime_ref(scheme="https", host="secure-frontend-shell-preview"),
+            path="nested/socket",
+        )
+        == "wss://secure-frontend-shell-preview:3000/nested/socket"
+    )
+
+
+def test_build_runtime_websocket_url_rejects_invalid_paths() -> None:
+    from app.api.registry import _build_runtime_websocket_url
+    from app.services.proxy_targets import RuntimeProxyValidationError
+
+    with pytest.raises(RuntimeProxyValidationError, match="proxy path is not allowed"):
+        _build_runtime_websocket_url(_runtime_ref(), path="_next/static/../server.js")
+
+
+def test_frontend_shell_websocket_rejects_production_mode_without_runtime_lookup(client, monkeypatch) -> None:
+    from app.api import registry as registry_api
+
+    runtime_lookup = MagicMock(side_effect=AssertionError("runtime lookup should not run in production mode"))
+    monkeypatch.setattr(registry_api, "_get_frontend_shell_runtime_ref", runtime_lookup)
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/frontend-shell/_next/webpack-hmr?id=test"):
+            pass
+
+    assert exc_info.value.code == 1008
+    runtime_lookup.assert_not_called()
 
 
 def test_frontend_shell_proxy_strips_decoded_response_framing_headers(client, monkeypatch) -> None:
