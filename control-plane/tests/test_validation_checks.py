@@ -156,3 +156,52 @@ def test_run_deployment_validation_records_route_failure(client, monkeypatch) ->
     failed = [check for check in payload["checks"] if check["status"] == "failed"]
     assert failed[0]["failure_layer"] == "service_route"
     assert "returned 404" in failed[0]["message"]
+
+
+def test_run_deployment_validation_clears_previous_attempt_state(client, monkeypatch) -> None:
+    from app.api import validation
+    from app.db import get_session_factory
+
+    class FakeResponse:
+        text = '{"status":"ok"}'
+
+        def __init__(self, status_code: int):
+            self.status_code = status_code
+
+        def json(self):
+            return {"status": "ok"}
+
+    call_count = 0
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return FakeResponse(404 if url.endswith("/metadata") else 200)
+            return FakeResponse(200)
+
+    with get_session_factory()() as session:
+        _add_healthy_service_deployment(session)
+        session.commit()
+
+    monkeypatch.setattr(validation.httpx, "AsyncClient", FakeAsyncClient)
+    first = client.post("/validation/deployments/dep_validation_fixture/run")
+    assert first.status_code == 200
+    assert first.json()["validation_status"] == "failed"
+
+    second = client.post("/validation/deployments/dep_validation_fixture/run")
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["validation_status"] == "passed"
+    assert len(payload["checks"]) == 2
+    assert all(check["status"] == "passed" for check in payload["checks"])

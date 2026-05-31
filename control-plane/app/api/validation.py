@@ -126,6 +126,7 @@ async def run_deployment_validation(deployment_id: str, session: Session = Depen
     steps = registry.suggested_validation_steps_for_deployment(deployment)
     if not steps:
         return _summary(registry, deployment_id)
+    registry.clear_validation_checks_for_deployment(deployment.deployment_id)
     for step in steps:
         await _run_http_step(registry, deployment.deployment_id, deployment.unit_id, step)
     session.flush()

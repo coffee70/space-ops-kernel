@@ -35,11 +35,15 @@ def test_change_preview_deploy_routes_through_deployment_service(client) -> None
     assert payload["agent_run_id"] == "run-deploy-1"
     assert payload["branch"] == "main"
     assert payload["deployment_intent"] == "deploy_preview"
+    assert payload["validation_status"] == "not_run"
+    assert payload["success_claim_allowed"] is False
     assert payload["commit_sha"]
     assert payload["logs_url"].startswith("/deployments/")
     executed = _execute_queued_deployment(client, payload["deployment_id"])
     assert executed["status"] == "healthy"
     assert executed["registered"] is True
+    status_response = client.get(f"/deployments/{payload['deployment_id']}")
+    assert payload["next_validation_steps"] == status_response.json()["next_validation_steps"]
 
 
 def test_change_preview_revert_submits_baseline_deployment(client) -> None:
@@ -108,6 +112,8 @@ def test_change_preview_revert_submits_baseline_deployment(client) -> None:
     assert revert_payload["preview_deployment_id"] == preview_deployment_id
     assert revert_payload["target_unit_id"] == "derived-telemetry-service"
     assert revert_payload["target_application_id"] == "telemetry"
+    assert revert_payload["validation_status"] == "not_run"
+    assert revert_payload["success_claim_allowed"] is False
 
     poll = client.get(f"/deployments/{revert_payload['deployment_id']}")
     assert poll.status_code == 200
