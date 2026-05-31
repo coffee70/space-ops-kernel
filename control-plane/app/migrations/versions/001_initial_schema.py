@@ -81,6 +81,42 @@ def upgrade() -> None:
     op.create_index("ix_unit_health_snapshots_deployment_id", "unit_health_snapshots", ["deployment_id"])
 
     op.create_table(
+        "validation_attempts",
+        sa.Column("id", sa.String(length=64), primary_key=True, nullable=False),
+        sa.Column("deployment_id", sa.String(length=64), sa.ForeignKey("deployments.deployment_id"), nullable=True),
+        sa.Column("unit_id", sa.String(length=255), sa.ForeignKey("managed_units.unit_id"), nullable=True),
+        sa.Column("status", sa.String(length=64), nullable=False),
+        sa.Column("triggered_by", sa.String(length=255), nullable=True),
+        sa.Column("validation_base_url", sa.String(length=1024), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("message", sa.Text(), nullable=True),
+    )
+    op.create_index("ix_validation_attempts_deployment_id", "validation_attempts", ["deployment_id"])
+    op.create_index("ix_validation_attempts_unit_id", "validation_attempts", ["unit_id"])
+
+    op.create_table(
+        "validation_checks",
+        sa.Column("id", sa.String(length=64), primary_key=True, nullable=False),
+        sa.Column("attempt_id", sa.String(length=64), sa.ForeignKey("validation_attempts.id"), nullable=True),
+        sa.Column("deployment_id", sa.String(length=64), sa.ForeignKey("deployments.deployment_id"), nullable=True),
+        sa.Column("unit_id", sa.String(length=255), sa.ForeignKey("managed_units.unit_id"), nullable=True),
+        sa.Column("check_type", sa.String(length=64), nullable=False),
+        sa.Column("target_ref", sa.String(length=1024), nullable=False),
+        sa.Column("status", sa.String(length=64), nullable=False),
+        sa.Column("expected_json", sa.JSON(), nullable=True),
+        sa.Column("observed_json", sa.JSON(), nullable=True),
+        sa.Column("failure_layer", sa.String(length=64), nullable=True),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_index("ix_validation_checks_attempt_id", "validation_checks", ["attempt_id"])
+    op.create_index("ix_validation_checks_deployment_id", "validation_checks", ["deployment_id"])
+    op.create_index("ix_validation_checks_unit_id", "validation_checks", ["unit_id"])
+
+    op.create_table(
         "runtime_bootstrap_runs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
         sa.Column("status", sa.String(length=64), nullable=False),
@@ -281,6 +317,15 @@ def downgrade() -> None:
     op.drop_index("ux_applications_proxy_base_path", table_name="applications")
     op.drop_index("ux_applications_route_path", table_name="applications")
     op.drop_table("applications")
+
+    op.drop_index("ix_validation_checks_unit_id", table_name="validation_checks")
+    op.drop_index("ix_validation_checks_deployment_id", table_name="validation_checks")
+    op.drop_index("ix_validation_checks_attempt_id", table_name="validation_checks")
+    op.drop_table("validation_checks")
+
+    op.drop_index("ix_validation_attempts_unit_id", table_name="validation_attempts")
+    op.drop_index("ix_validation_attempts_deployment_id", table_name="validation_attempts")
+    op.drop_table("validation_attempts")
 
     op.drop_index("ix_unit_health_snapshots_deployment_id", table_name="unit_health_snapshots")
     op.drop_index("ix_unit_health_snapshots_unit_id", table_name="unit_health_snapshots")

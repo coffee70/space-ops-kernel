@@ -94,6 +94,10 @@ def test_frontend_runtime_preview_context_returns_baseline_when_no_shell(client)
         "baseline_commit_sha": None,
         "preview_deployment_id": None,
         "target_application_id": None,
+        "validation_status": "not_run",
+        "validation_summary": {},
+        "success_claim_allowed": False,
+        "last_validation_message": None,
     }
 
 
@@ -155,6 +159,35 @@ def test_frontend_runtime_preview_context_shows_non_main_shell_preview(client) -
     assert payload["baseline_branch"] == "main"
     assert payload["baseline_commit_sha"] == "baseline123"
     assert payload["target_application_id"] == "telemetry"
+    assert payload["validation_status"] == "not_run"
+    assert payload["success_claim_allowed"] is False
+
+
+def test_frontend_runtime_preview_context_includes_validation_failure(client) -> None:
+    from app.db import get_session_factory
+    from app.registry.service import RegistryService
+
+    with get_session_factory()() as session:
+        _add_frontend_shell(session, branch="preview/shell-banner", deployment_id="dep_shell_validation")
+        registry = RegistryService(session)
+        check = registry.create_validation_check(
+            deployment_id="dep_shell_validation",
+            unit_id="mission-control-frontend-shell",
+            check_type="frontend_shell_route",
+            target_ref="/frontend-shell",
+            failure_layer="frontend_route",
+        )
+        registry.mark_validation_failed(check, message="GET /frontend-shell returned 404", failure_layer="frontend_route")
+        session.commit()
+
+    response = client.get("/registry/frontend-runtime/preview-context")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["validation_status"] == "failed"
+    assert payload["validation_summary"]["failed"] == 1
+    assert payload["success_claim_allowed"] is False
+    assert payload["last_validation_message"] == "GET /frontend-shell returned 404"
 
 
 def test_frontend_runtime_preview_context_ignores_backend_preview_target_application(client) -> None:

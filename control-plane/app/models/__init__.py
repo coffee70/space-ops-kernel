@@ -11,6 +11,8 @@ from app.models.runtime import (
     RuntimeBootstrapRun,
     RuntimeBootstrapUnit,
     UnitHealthSnapshot,
+    ValidationAttempt,
+    ValidationCheck,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "RuntimeBootstrapRun",
     "RuntimeBootstrapUnit",
     "UnitHealthSnapshot",
+    "ValidationAttempt",
+    "ValidationCheck",
 ]
