@@ -81,6 +81,24 @@ def upgrade() -> None:
     op.create_index("ix_unit_health_snapshots_deployment_id", "unit_health_snapshots", ["deployment_id"])
 
     op.create_table(
+        "validation_checks",
+        sa.Column("id", sa.String(length=64), primary_key=True, nullable=False),
+        sa.Column("deployment_id", sa.String(length=64), sa.ForeignKey("deployments.deployment_id"), nullable=True),
+        sa.Column("unit_id", sa.String(length=255), sa.ForeignKey("managed_units.unit_id"), nullable=True),
+        sa.Column("check_type", sa.String(length=64), nullable=False),
+        sa.Column("target_ref", sa.String(length=1024), nullable=False),
+        sa.Column("status", sa.String(length=64), nullable=False),
+        sa.Column("expected_json", sa.JSON(), nullable=True),
+        sa.Column("observed_json", sa.JSON(), nullable=True),
+        sa.Column("failure_layer", sa.String(length=64), nullable=True),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    )
+    op.create_index("ix_validation_checks_deployment_id", "validation_checks", ["deployment_id"])
+    op.create_index("ix_validation_checks_unit_id", "validation_checks", ["unit_id"])
+
+    op.create_table(
         "runtime_bootstrap_runs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
         sa.Column("status", sa.String(length=64), nullable=False),

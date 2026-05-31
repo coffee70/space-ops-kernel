@@ -20,6 +20,7 @@ from app.models.runtime import (
     ManagedBranch,
     ManagedUnit,
     UnitHealthSnapshot,
+    ValidationCheck,
 )
 from app.schemas import (
     ActiveFrontendPreviewRuntimeResponse,
@@ -31,6 +32,8 @@ from app.schemas import (
     RuntimeRef,
     SeededApplicationDefinition,
     UnitManifest,
+    ValidationCheckResponse,
+    ValidationStep,
 )
 
 NON_TERMINAL_DEPLOYMENT_STATUSES = frozenset({"queued", "materializing", "building", "health_checking"})
@@ -423,6 +426,195 @@ class RegistryService:
             return None
         return deployment
 
+    def create_validation_check(
+        self,
+        *,
+        deployment_id: str | None,
+        unit_id: str | None,
+        check_type: str,
+        target_ref: str,
+        expected_json: dict[str, Any] | None = None,
+        failure_layer: str | None = None,
+    ) -> ValidationCheck:
+        check = ValidationCheck(
+            deployment_id=deployment_id,
+            unit_id=unit_id,
+            check_type=check_type,
+            target_ref=target_ref,
+            status="pending",
+            expected_json=expected_json,
+            failure_layer=failure_layer,
+        )
+        self.session.add(check)
+        self.session.flush()
+        return check
+
+    def mark_validation_running(self, check: ValidationCheck) -> None:
+        check.status = "running"
+        check.updated_at = utcnow()
+        self.session.flush()
+
+    def mark_validation_passed(
+        self,
+        check: ValidationCheck,
+        *,
+        observed_json: dict[str, Any] | None = None,
+        message: str | None = None,
+    ) -> None:
+        check.status = "passed"
+        check.observed_json = observed_json
+        check.message = message
+        check.updated_at = utcnow()
+        self.session.flush()
+
+    def mark_validation_failed(
+        self,
+        check: ValidationCheck,
+        *,
+        observed_json: dict[str, Any] | None = None,
+        failure_layer: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        check.status = "failed"
+        check.observed_json = observed_json
+        check.failure_layer = failure_layer or check.failure_layer or "unknown"
+        check.message = message
+        check.updated_at = utcnow()
+        self.session.flush()
+
+    def get_validation_checks_for_deployment(self, deployment_id: str) -> list[ValidationCheck]:
+        return list(
+            self.session.query(ValidationCheck)
+            .filter(ValidationCheck.deployment_id == deployment_id)
+            .order_by(ValidationCheck.created_at.asc(), ValidationCheck.id.asc())
+        )
+
+    def serialize_validation_check(self, check: ValidationCheck) -> ValidationCheckResponse:
+        return ValidationCheckResponse(
+            id=check.id,
+            deployment_id=check.deployment_id,
+            unit_id=check.unit_id,
+            check_type=check.check_type,
+            target_ref=check.target_ref,
+            status=check.status,
+            expected_json=check.expected_json,
+            observed_json=check.observed_json,
+            failure_layer=check.failure_layer,
+            message=check.message,
+        )
+
+    def summarize_validation_counts(self, deployment_id: str) -> dict[str, int]:
+        counts = {status: 0 for status in ("passed", "failed", "running", "skipped")}
+        for check in self.get_validation_checks_for_deployment(deployment_id):
+            if check.status in counts:
+                counts[check.status] += 1
+        return counts
+
+    def summarize_validation_status(self, deployment_id: str) -> str:
+        statuses = [check.status for check in self.get_validation_checks_for_deployment(deployment_id)]
+        if not statuses:
+            return "not_run"
+        if any(status == "running" for status in statuses):
+            return "running"
+        if any(status == "failed" for status in statuses):
+            return "failed"
+        if all(status == "passed" for status in statuses):
+            return "passed"
+        if any(status == "passed" for status in statuses):
+            return "partially_validated"
+        return "not_run"
+
+    def latest_validation_failure_message(self, deployment_id: str) -> str | None:
+        check = (
+            self.session.query(ValidationCheck)
+            .filter(ValidationCheck.deployment_id == deployment_id, ValidationCheck.status == "failed")
+            .order_by(ValidationCheck.updated_at.desc(), ValidationCheck.id.desc())
+            .first()
+        )
+        return check.message if check is not None else None
+
+    def success_claim_allowed(self, deployment: Deployment | None) -> bool:
+        return bool(
+            deployment is not None
+            and deployment.status == "healthy"
+            and deployment.health_status == "passing"
+            and self.summarize_validation_status(deployment.deployment_id) == "passed"
+        )
+
+    def suggested_validation_steps_for_deployment(self, deployment: Deployment) -> list[ValidationStep]:
+        unit = self.session.get(ManagedUnit, deployment.unit_id)
+        if unit is None:
+            return []
+        discovery = unit.discovery_metadata_json if isinstance(unit.discovery_metadata_json, dict) else {}
+        if unit.runtime_kind == "service":
+            service_slug = discovery.get("service_slug") if isinstance(discovery.get("service_slug"), str) else unit.unit_id
+            health_path = discovery.get("health_endpoint") if isinstance(discovery.get("health_endpoint"), str) else None
+            if not health_path and isinstance(deployment.runtime_ref, dict):
+                health = deployment.runtime_ref.get("health")
+                if isinstance(health, dict) and isinstance(health.get("path"), str):
+                    health_path = health["path"]
+            health_path = health_path or "/health"
+            steps = [
+                ValidationStep(
+                    check_type="service_health_gateway",
+                    path=f"/internal/runtime-services/{service_slug}{health_path}",
+                    expected_status=200,
+                    failure_layer="gateway",
+                )
+            ]
+            primary_routes = discovery.get("primary_routes")
+            if isinstance(primary_routes, list):
+                for index, route in enumerate(primary_routes):
+                    if not isinstance(route, dict):
+                        continue
+                    method = route.get("method", "GET")
+                    path = route.get("path")
+                    if method != "GET" or not isinstance(path, str) or not path.startswith("/"):
+                        continue
+                    expected_status = route.get("expected_status") or 200
+                    if not isinstance(expected_status, int):
+                        expected_status = 200
+                    steps.append(
+                        ValidationStep(
+                            check_type=str(route.get("check_type") or f"service_primary_route_{index + 1}"),
+                            path=f"/internal/runtime-services/{service_slug}{path}",
+                            expected_status=expected_status,
+                            expected_body_contains=(
+                                route.get("expected_body_contains")
+                                if isinstance(route.get("expected_body_contains"), dict)
+                                else None
+                            ),
+                            failure_layer="service_route",
+                        )
+                    )
+            return steps
+        if unit.runtime_kind == "frontend_application":
+            application_id = None
+            for application in self.get_applications():
+                app_deployment = self.get_active_application_deployment(application.application_id)
+                if app_deployment is not None and app_deployment.deployment_id == deployment.deployment_id:
+                    application_id = application.application_id
+                    break
+            if application_id:
+                return [
+                    ValidationStep(
+                        check_type="frontend_application_route",
+                        path=f"/runtime-applications/{application_id}",
+                        expected_status=200,
+                        failure_layer="frontend_route",
+                    )
+                ]
+        if unit.runtime_kind == "frontend_shell":
+            return [
+                ValidationStep(
+                    check_type="frontend_shell_route",
+                    path="/frontend-shell",
+                    expected_status=200,
+                    failure_layer="frontend_route",
+                )
+            ]
+        return []
+
     def get_active_frontend_shell_unit(self) -> ManagedUnit | None:
         """Return the canonical active frontend shell unit, when one exists."""
 
@@ -477,6 +669,10 @@ class RegistryService:
             baseline_commit_sha=branch_record.base_commit_sha if branch_record is not None else None,
             preview_deployment_id=deployment.deployment_id if is_preview and deployment is not None else None,
             target_application_id=target_application_id,
+            validation_status=self.summarize_validation_status(deployment.deployment_id) if deployment is not None else "not_run",
+            validation_summary=self.summarize_validation_counts(deployment.deployment_id) if deployment is not None else {},
+            success_claim_allowed=self.success_claim_allowed(deployment),
+            last_validation_message=self.latest_validation_failure_message(deployment.deployment_id) if deployment is not None else None,
         )
 
     def serialize_frontend_runtime_status(
@@ -573,6 +769,10 @@ class RegistryService:
             mode=mode,
             is_preview=mode == "preview",
             failure_reason=deployment.failure_reason,
+            validation_status=self.summarize_validation_status(deployment.deployment_id),
+            validation_summary=self.summarize_validation_counts(deployment.deployment_id),
+            success_claim_allowed=self.success_claim_allowed(deployment),
+            last_validation_message=self.latest_validation_failure_message(deployment.deployment_id),
         )
 
     def get_runtime_ref_for_unit(self, unit_id: str) -> RuntimeRef | None:

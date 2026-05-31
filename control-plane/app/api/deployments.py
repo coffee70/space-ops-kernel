@@ -53,6 +53,9 @@ def get_deployment(
         logs_url=f"/deployments/{deployment.deployment_id}/logs",
         registered=deployment.status == "healthy",
         failure_reason=deployment.failure_reason,
+        validation_status=registry.summarize_validation_status(deployment.deployment_id),
+        next_validation_steps=registry.suggested_validation_steps_for_deployment(deployment),
+        success_claim_allowed=registry.success_claim_allowed(deployment),
     )
 
 

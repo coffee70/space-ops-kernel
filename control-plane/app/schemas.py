@@ -625,6 +625,10 @@ class ActiveFrontendPreviewRuntimeResponse(BaseModel):
     baseline_commit_sha: str | None = None
     preview_deployment_id: str | None = None
     target_application_id: str | None = None
+    validation_status: str = "not_run"
+    validation_summary: dict[str, int] = Field(default_factory=dict)
+    success_claim_allowed: bool = False
+    last_validation_message: str | None = None
 
 
 FrontendRuntimeEffectiveState = Literal[
@@ -651,6 +655,10 @@ class FrontendRuntimeDeployment(BaseModel):
     mode: Literal["baseline", "preview", "unknown"] = "unknown"
     is_preview: bool = False
     failure_reason: str | None = None
+    validation_status: str = "not_run"
+    validation_summary: dict[str, int] = Field(default_factory=dict)
+    success_claim_allowed: bool = False
+    last_validation_message: str | None = None
 
 
 class FrontendRuntimeStatusResponse(BaseModel):
@@ -679,6 +687,44 @@ class DeploymentRecordResponse(BaseModel):
     logs_url: str
     registered: bool
     failure_reason: str | None = None
+    validation_status: str = "not_run"
+    next_validation_steps: list["ValidationStep"] = Field(default_factory=list)
+    success_claim_allowed: bool = False
+
+
+class ValidationStep(BaseModel):
+    """Suggested post-deploy validation step."""
+
+    check_type: str
+    method: Literal["GET"] = "GET"
+    path: str
+    expected_status: int = 200
+    expected_body_contains: dict[str, Any] | None = None
+    failure_layer: str | None = None
+
+
+class ValidationCheckResponse(BaseModel):
+    """Persisted post-deploy validation evidence."""
+
+    id: str
+    deployment_id: str | None
+    unit_id: str | None
+    check_type: str
+    target_ref: str
+    status: str
+    expected_json: dict[str, Any] | None = None
+    observed_json: dict[str, Any] | None = None
+    failure_layer: str | None = None
+    message: str | None = None
+
+
+class DeploymentValidationSummary(BaseModel):
+    """Validation state for a deployment."""
+
+    deployment_id: str
+    unit_id: str
+    validation_status: Literal["not_run", "running", "passed", "failed", "partially_validated"]
+    checks: list[ValidationCheckResponse] = Field(default_factory=list)
 
 
 class ChangePreviewDeployRequest(BaseModel):
