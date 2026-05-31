@@ -87,12 +87,30 @@ class UnitHealthSnapshot(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+class ValidationAttempt(Base):
+    """Append-only post-deploy validation attempt."""
+
+    __tablename__ = "validation_attempts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: f"val_attempt_{uuid4().hex[:12]}")
+    deployment_id: Mapped[str | None] = mapped_column(ForeignKey("deployments.deployment_id"), nullable=True, index=True)
+    unit_id: Mapped[str | None] = mapped_column(ForeignKey("managed_units.unit_id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending")
+    triggered_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    validation_base_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ValidationCheck(Base):
     """Post-deploy validation evidence for a deployment or unit."""
 
     __tablename__ = "validation_checks"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: f"val_{uuid4().hex[:12]}")
+    attempt_id: Mapped[str | None] = mapped_column(ForeignKey("validation_attempts.id"), nullable=True, index=True)
     deployment_id: Mapped[str | None] = mapped_column(ForeignKey("deployments.deployment_id"), nullable=True, index=True)
     unit_id: Mapped[str | None] = mapped_column(ForeignKey("managed_units.unit_id"), nullable=True, index=True)
     check_type: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -13,7 +13,7 @@ from app.db import get_db
 from app.registry.service import RegistryService
 from app.schemas import DeploymentValidationSummary, ValidationStep
 
-ValidationStatus = Literal["not_run", "running", "passed", "failed", "partially_validated"]
+ValidationStatus = Literal["not_run", "not_ready", "running", "passed", "failed", "partially_validated"]
 
 router = APIRouter(prefix="/validation", tags=["validation"])
 
@@ -22,11 +22,20 @@ def _summary(registry: RegistryService, deployment_id: str) -> DeploymentValidat
     deployment = registry.get_deployment(deployment_id)
     if deployment is None:
         raise HTTPException(status_code=404, detail="deployment not found")
+    attempts = registry.get_validation_attempts_for_deployment(deployment.deployment_id)
+    latest_attempt = attempts[-1] if attempts else None
+    checks = (
+        registry.get_validation_checks_for_attempt(latest_attempt.id)
+        if latest_attempt is not None
+        else registry.get_validation_checks_for_deployment(deployment.deployment_id)
+    )
     return DeploymentValidationSummary(
         deployment_id=deployment.deployment_id,
         unit_id=deployment.unit_id,
         validation_status=cast(ValidationStatus, registry.summarize_validation_status(deployment.deployment_id)),
-        checks=[registry.serialize_validation_check(check) for check in registry.get_validation_checks_for_deployment(deployment.deployment_id)],
+        latest_attempt=registry.serialize_validation_attempt(latest_attempt) if latest_attempt is not None else None,
+        attempts=[registry.serialize_validation_attempt(attempt) for attempt in attempts],
+        checks=[registry.serialize_validation_check(check) for check in checks],
     )
 
 
@@ -41,10 +50,25 @@ def _body_contains(observed: Any, expected: dict[str, Any] | None) -> bool:
     return True
 
 
-async def _run_http_step(registry: RegistryService, deployment_id: str, unit_id: str, step: ValidationStep) -> None:
+def _validation_base_url() -> str:
     settings = app.config.get_settings()
-    base_url = settings.frontend_control_plane_server_url.rstrip("/") or f"http://localhost:{settings.control_plane_port}"
+    edge_url = settings.frontend_api_server_url.rstrip("/")
+    if edge_url:
+        return edge_url
+    return settings.frontend_control_plane_server_url.rstrip("/") or f"http://localhost:{settings.control_plane_port}"
+
+
+async def _run_http_step(
+    registry: RegistryService,
+    *,
+    attempt_id: str,
+    deployment_id: str,
+    unit_id: str,
+    base_url: str,
+    step: ValidationStep,
+) -> None:
     check = registry.create_validation_check(
+        attempt_id=attempt_id,
         deployment_id=deployment_id,
         unit_id=unit_id,
         check_type=step.check_type,
@@ -123,11 +147,43 @@ async def run_deployment_validation(deployment_id: str, session: Session = Depen
     deployment = registry.get_deployment(deployment_id)
     if deployment is None:
         raise HTTPException(status_code=404, detail="deployment not found")
+    base_url = _validation_base_url()
+    attempt = registry.create_validation_attempt(
+        deployment_id=deployment.deployment_id,
+        unit_id=deployment.unit_id,
+        validation_base_url=base_url,
+        triggered_by="run_deployment_validation",
+    )
+    if deployment.status != "healthy" or deployment.health_status != "passing":
+        registry.mark_validation_attempt_not_ready(
+            attempt,
+            message="Deployment is not healthy/passing yet; wait_for_deployment should be run before validation.",
+        )
+        registry.record_event(
+            deployment.deployment_id,
+            "validation_not_ready",
+            "Deployment is not healthy/passing yet; wait_for_deployment should be run before validation.",
+            level="warning",
+        )
+        session.flush()
+        return _summary(registry, deployment_id)
     steps = registry.suggested_validation_steps_for_deployment(deployment)
     if not steps:
         return _summary(registry, deployment_id)
-    registry.clear_validation_checks_for_deployment(deployment.deployment_id)
+    registry.mark_validation_attempt_running(attempt)
     for step in steps:
-        await _run_http_step(registry, deployment.deployment_id, deployment.unit_id, step)
+        await _run_http_step(
+            registry,
+            attempt_id=attempt.id,
+            deployment_id=deployment.deployment_id,
+            unit_id=deployment.unit_id,
+            base_url=base_url,
+            step=step,
+        )
+    failed_checks = [check for check in registry.get_validation_checks_for_attempt(attempt.id) if check.status == "failed"]
+    if failed_checks:
+        registry.mark_validation_attempt_failed(attempt, message=failed_checks[-1].message)
+    else:
+        registry.mark_validation_attempt_passed(attempt, message="Post-deploy validation passed.")
     session.flush()
     return _summary(registry, deployment_id)

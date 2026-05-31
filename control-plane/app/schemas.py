@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from enum import Enum
 from pathlib import PurePosixPath
 from typing import Any, Literal
@@ -707,6 +708,7 @@ class ValidationCheckResponse(BaseModel):
     """Persisted post-deploy validation evidence."""
 
     id: str
+    attempt_id: str | None = None
     deployment_id: str | None
     unit_id: str | None
     check_type: str
@@ -718,12 +720,28 @@ class ValidationCheckResponse(BaseModel):
     message: str | None = None
 
 
+class ValidationAttemptResponse(BaseModel):
+    """Append-only post-deploy validation attempt."""
+
+    id: str
+    deployment_id: str | None
+    unit_id: str | None
+    status: str
+    validation_base_url: str | None = None
+    message: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class DeploymentValidationSummary(BaseModel):
     """Validation state for a deployment."""
 
     deployment_id: str
     unit_id: str
-    validation_status: Literal["not_run", "running", "passed", "failed", "partially_validated"]
+    validation_status: Literal["not_run", "not_ready", "running", "passed", "failed", "partially_validated"]
+    latest_attempt: ValidationAttemptResponse | None = None
+    attempts: list[ValidationAttemptResponse] = Field(default_factory=list)
     checks: list[ValidationCheckResponse] = Field(default_factory=list)
 
 

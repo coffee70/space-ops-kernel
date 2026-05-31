@@ -20,6 +20,7 @@ from app.models.runtime import (
     ManagedBranch,
     ManagedUnit,
     UnitHealthSnapshot,
+    ValidationAttempt,
     ValidationCheck,
 )
 from app.schemas import (
@@ -32,6 +33,7 @@ from app.schemas import (
     RuntimeRef,
     SeededApplicationDefinition,
     UnitManifest,
+    ValidationAttemptResponse,
     ValidationCheckResponse,
     ValidationStep,
 )
@@ -429,6 +431,7 @@ class RegistryService:
     def create_validation_check(
         self,
         *,
+        attempt_id: str | None = None,
         deployment_id: str | None,
         unit_id: str | None,
         check_type: str,
@@ -437,6 +440,7 @@ class RegistryService:
         failure_layer: str | None = None,
     ) -> ValidationCheck:
         check = ValidationCheck(
+            attempt_id=attempt_id,
             deployment_id=deployment_id,
             unit_id=unit_id,
             check_type=check_type,
@@ -448,6 +452,51 @@ class RegistryService:
         self.session.add(check)
         self.session.flush()
         return check
+
+    def create_validation_attempt(
+        self,
+        *,
+        deployment_id: str | None,
+        unit_id: str | None,
+        validation_base_url: str | None = None,
+        triggered_by: str | None = None,
+    ) -> ValidationAttempt:
+        attempt = ValidationAttempt(
+            deployment_id=deployment_id,
+            unit_id=unit_id,
+            status="pending",
+            validation_base_url=validation_base_url,
+            triggered_by=triggered_by,
+        )
+        self.session.add(attempt)
+        self.session.flush()
+        return attempt
+
+    def mark_validation_attempt_running(self, attempt: ValidationAttempt) -> None:
+        attempt.status = "running"
+        attempt.updated_at = utcnow()
+        self.session.flush()
+
+    def mark_validation_attempt_passed(self, attempt: ValidationAttempt, *, message: str | None = None) -> None:
+        attempt.status = "passed"
+        attempt.message = message
+        attempt.updated_at = utcnow()
+        attempt.completed_at = utcnow()
+        self.session.flush()
+
+    def mark_validation_attempt_failed(self, attempt: ValidationAttempt, *, message: str | None = None) -> None:
+        attempt.status = "failed"
+        attempt.message = message
+        attempt.updated_at = utcnow()
+        attempt.completed_at = utcnow()
+        self.session.flush()
+
+    def mark_validation_attempt_not_ready(self, attempt: ValidationAttempt, *, message: str | None = None) -> None:
+        attempt.status = "not_ready"
+        attempt.message = message
+        attempt.updated_at = utcnow()
+        attempt.completed_at = utcnow()
+        self.session.flush()
 
     def mark_validation_running(self, check: ValidationCheck) -> None:
         check.status = "running"
@@ -489,6 +538,28 @@ class RegistryService:
             .order_by(ValidationCheck.created_at.asc(), ValidationCheck.id.asc())
         )
 
+    def get_validation_attempts_for_deployment(self, deployment_id: str) -> list[ValidationAttempt]:
+        return list(
+            self.session.query(ValidationAttempt)
+            .filter(ValidationAttempt.deployment_id == deployment_id)
+            .order_by(ValidationAttempt.created_at.asc(), ValidationAttempt.id.asc())
+        )
+
+    def get_latest_validation_attempt_for_deployment(self, deployment_id: str) -> ValidationAttempt | None:
+        return (
+            self.session.query(ValidationAttempt)
+            .filter(ValidationAttempt.deployment_id == deployment_id)
+            .order_by(ValidationAttempt.created_at.desc(), ValidationAttempt.id.desc())
+            .first()
+        )
+
+    def get_validation_checks_for_attempt(self, attempt_id: str) -> list[ValidationCheck]:
+        return list(
+            self.session.query(ValidationCheck)
+            .filter(ValidationCheck.attempt_id == attempt_id)
+            .order_by(ValidationCheck.created_at.asc(), ValidationCheck.id.asc())
+        )
+
     def clear_validation_checks_for_deployment(self, deployment_id: str) -> int:
         count = (
             self.session.query(ValidationCheck)
@@ -501,6 +572,7 @@ class RegistryService:
     def serialize_validation_check(self, check: ValidationCheck) -> ValidationCheckResponse:
         return ValidationCheckResponse(
             id=check.id,
+            attempt_id=check.attempt_id,
             deployment_id=check.deployment_id,
             unit_id=check.unit_id,
             check_type=check.check_type,
@@ -512,15 +584,42 @@ class RegistryService:
             message=check.message,
         )
 
+    def serialize_validation_attempt(self, attempt: ValidationAttempt) -> ValidationAttemptResponse:
+        return ValidationAttemptResponse(
+            id=attempt.id,
+            deployment_id=attempt.deployment_id,
+            unit_id=attempt.unit_id,
+            status=attempt.status,
+            validation_base_url=attempt.validation_base_url,
+            message=attempt.message,
+            created_at=attempt.created_at,
+            updated_at=attempt.updated_at,
+            completed_at=attempt.completed_at,
+        )
+
     def summarize_validation_counts(self, deployment_id: str) -> dict[str, int]:
         counts = {status: 0 for status in ("passed", "failed", "running", "skipped")}
-        for check in self.get_validation_checks_for_deployment(deployment_id):
+        latest_attempt = self.get_latest_validation_attempt_for_deployment(deployment_id)
+        checks = (
+            self.get_validation_checks_for_attempt(latest_attempt.id)
+            if latest_attempt is not None
+            else self.get_validation_checks_for_deployment(deployment_id)
+        )
+        for check in checks:
             if check.status in counts:
                 counts[check.status] += 1
         return counts
 
     def summarize_validation_status(self, deployment_id: str) -> str:
-        statuses = [check.status for check in self.get_validation_checks_for_deployment(deployment_id)]
+        latest_attempt = self.get_latest_validation_attempt_for_deployment(deployment_id)
+        if latest_attempt is not None and latest_attempt.status in {"not_ready", "running", "passed", "failed"}:
+            return latest_attempt.status
+        checks = (
+            self.get_validation_checks_for_attempt(latest_attempt.id)
+            if latest_attempt is not None
+            else self.get_validation_checks_for_deployment(deployment_id)
+        )
+        statuses = [check.status for check in checks]
         if not statuses:
             return "not_run"
         if any(status == "running" for status in statuses):
@@ -534,21 +633,38 @@ class RegistryService:
         return "not_run"
 
     def latest_validation_failure_message(self, deployment_id: str) -> str | None:
+        latest_attempt = self.get_latest_validation_attempt_for_deployment(deployment_id)
+        if latest_attempt is not None and latest_attempt.status in {"failed", "not_ready"} and latest_attempt.message:
+            return latest_attempt.message
+        query = self.session.query(ValidationCheck)
+        if latest_attempt is not None:
+            query = query.filter(ValidationCheck.attempt_id == latest_attempt.id)
+        else:
+            query = query.filter(ValidationCheck.deployment_id == deployment_id)
         check = (
-            self.session.query(ValidationCheck)
-            .filter(ValidationCheck.deployment_id == deployment_id, ValidationCheck.status == "failed")
+            query.filter(ValidationCheck.status == "failed")
             .order_by(ValidationCheck.updated_at.desc(), ValidationCheck.id.desc())
             .first()
         )
         return check.message if check is not None else None
 
     def success_claim_allowed(self, deployment: Deployment | None) -> bool:
-        return bool(
-            deployment is not None
-            and deployment.status == "healthy"
-            and deployment.health_status == "passing"
-            and self.summarize_validation_status(deployment.deployment_id) == "passed"
-        )
+        if (
+            deployment is None
+            or deployment.status != "healthy"
+            or deployment.health_status != "passing"
+            or self.summarize_validation_status(deployment.deployment_id) != "passed"
+        ):
+            return False
+        unit = self.session.get(ManagedUnit, deployment.unit_id)
+        latest_attempt = self.get_latest_validation_attempt_for_deployment(deployment.deployment_id)
+        latest_checks = self.get_validation_checks_for_attempt(latest_attempt.id) if latest_attempt is not None else []
+        passed_check_types = {check.check_type for check in latest_checks if check.status == "passed"}
+        if unit is not None and unit.runtime_kind == "frontend_application":
+            return "frontend_application_operator_route" in passed_check_types
+        if unit is not None and unit.runtime_kind == "frontend_shell":
+            return "frontend_shell_operator_root" in passed_check_types
+        return True
 
     def suggested_validation_steps_for_deployment(self, deployment: Deployment) -> list[ValidationStep]:
         unit = self.session.get(ManagedUnit, deployment.unit_id)
@@ -607,7 +723,13 @@ class RegistryService:
             if application_id:
                 return [
                     ValidationStep(
-                        check_type="frontend_application_route",
+                        check_type="frontend_application_operator_route",
+                        path=f"/apps/{application_id}",
+                        expected_status=200,
+                        failure_layer="frontend_route",
+                    ),
+                    ValidationStep(
+                        check_type="frontend_application_runtime_proxy",
                         path=f"/runtime-applications/{application_id}",
                         expected_status=200,
                         failure_layer="frontend_route",
@@ -616,7 +738,13 @@ class RegistryService:
         if unit.runtime_kind == "frontend_shell":
             return [
                 ValidationStep(
-                    check_type="frontend_shell_route",
+                    check_type="frontend_shell_operator_root",
+                    path="/",
+                    expected_status=200,
+                    failure_layer="frontend_route",
+                ),
+                ValidationStep(
+                    check_type="frontend_shell_direct_proxy",
                     path="/frontend-shell",
                     expected_status=200,
                     failure_layer="frontend_route",
