@@ -560,15 +560,6 @@ class RegistryService:
             .order_by(ValidationCheck.created_at.asc(), ValidationCheck.id.asc())
         )
 
-    def clear_validation_checks_for_deployment(self, deployment_id: str) -> int:
-        count = (
-            self.session.query(ValidationCheck)
-            .filter(ValidationCheck.deployment_id == deployment_id)
-            .delete(synchronize_session=False)
-        )
-        self.session.flush()
-        return int(count or 0)
-
     def serialize_validation_check(self, check: ValidationCheck) -> ValidationCheckResponse:
         return ValidationCheckResponse(
             id=check.id,
