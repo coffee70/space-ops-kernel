@@ -4,6 +4,12 @@ Layer 1 runtime orchestration for the Space Ops local stack.
 
 Extraction baseline: `c2-infra` commit `7b4f15ace9895c440ad89a9a460566c78135c57b` (`phase1-layer-split-baseline-2026-04-20`).
 
+## Documentation
+
+The curated documentation corpus for AI Engineer retrieval lives under this repository's `docs/` directory.
+
+This README is repo-local orientation and is not intended to be indexed as the canonical AI Engineer knowledge source.
+
 ## Documentation map (split checkout)
 
 These three repositories assume a sibling directory layout (`space-ops-kernel`, `space-ops-platform`, `space-ops-apps`). **Read the sibling docs before running cross-service checks** so you pick the intended environment (host vs Compose vs Docker runner).
@@ -42,7 +48,7 @@ docker compose up -d
 
 **Browser modes**
 
-1. **Edge proxy / normal demo (recommended):** open **`http://localhost:8080`**. Leave `NEXT_PUBLIC_API_URL` unset or empty and rebuild Mission Control after changing `.env` so the client bundle is not baked with an old absolute API host.
+1. **Edge proxy / normal operation (recommended):** open **`http://localhost:8080`**. Leave `NEXT_PUBLIC_API_URL` unset or empty and rebuild Mission Control after changing `.env` so the client bundle is not baked with an old absolute API host.
 
 2. **Direct frontend dev:** run the Mission Control UI from `../space-ops-apps/mission-control-ui` and open **`http://localhost:3000`**. Set **`NEXT_PUBLIC_API_URL=http://localhost:8000`** in that app's environment so the browser can reach `platform-api` without the edge proxy.
 

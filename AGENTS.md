@@ -10,6 +10,12 @@
 
 If you touch tests, Compose, URLs, or anything that crosses services, skim all three READMEs (and AGENTS files) so you do not run commands in the wrong environment.
 
+## Indexed documentation
+
+For platform behavior, implementation workflows, deployment procedures, runbooks, and AI Engineer retrieval, use the curated docs under `docs/`.
+
+This AGENTS.md file is local repo guidance and should not be indexed as the canonical AI Engineer knowledge corpus.
+
 ## Repo role (Layer 1)
 
 Keep changes scoped to runtime orchestration: Compose services, environment wiring, health/dependency ordering, ports, volumes, managed runtime manifests, and database bootstrap SQL.
